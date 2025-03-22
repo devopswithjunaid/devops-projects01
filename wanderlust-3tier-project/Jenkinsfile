@@ -1,0 +1,28 @@
+pipeline {
+    agent any 
+    
+    stages { 
+        stage('SCM Checkout') {
+            steps {
+                git branch: 'main', url: 'https://github.com/rjshk013/devops-projects.git'
+            }
+        }
+        // Run SonarQube test
+        stage('Run SonarQube') {
+            environment {
+                scannerHome = tool 'Sonar'
+            }
+            steps {
+                // Corrected syntax for named arguments
+                withSonarQubeEnv(installationName: 'sonar-jenkins', credentialsId: 'sonar-token') {
+                    // Change to the specific project directory before executing sonar-scanner
+                sh "${scannerHome}/bin/sonar-scanner \
+                    -Dsonar.projectKey=blog-app \
+                    -Dsonar.projectName=blog-app \
+                    -Dsonar.sources=wanderlust-3tier-project"
+                    }
+                }
+            }
+        }
+    }
+
