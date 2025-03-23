@@ -38,7 +38,7 @@ pipeline {
         stage('OWASP FS SCAN') {
             steps {
                 dir('wanderlust-3tier-project') {
-                    dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit', odcInstallation: 'DP-Check'
+                    dependencyCheck additionalArguments: '--scan ./ --disableYarnAudit --disableNodeAudit --nvdApiKey 'be5b87e4-3b1a-4460-b1fe-533c943d39eb ', odcInstallation: 'DP-Check'
                     dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
                 }
             }
