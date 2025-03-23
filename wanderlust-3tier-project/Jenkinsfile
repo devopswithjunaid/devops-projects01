@@ -1,6 +1,6 @@
 pipeline {
     agent any 
-    tools{
+    tools {
         jdk 'jdk17'
         nodejs 'node21'
     }    
@@ -10,7 +10,6 @@ pipeline {
                 git branch: 'main', url: 'https://github.com/rjshk013/devops-projects.git'
             }
         }
-        // Install project dependencies
         stage('Install Dependencies') {
             steps {
                 dir('wanderlust-3tier-project') {
@@ -18,7 +17,6 @@ pipeline {
                 }
             }
         }
-        // Run SonarQube test
         stage('Run SonarQube') {
             environment {
                 scannerHome = tool 'Sonar'
@@ -34,7 +32,6 @@ pipeline {
                 }
             }
         }
-        // OWASP Dependency Check
         stage('OWASP FS SCAN') {
             steps {
                 dir('wanderlust-3tier-project') {
@@ -42,20 +39,16 @@ pipeline {
                     dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
                 }
             }
-
-            stage('TRIVY FS SCAN') {
-    steps {
-        script {
-            // Pull Trivy Docker image and run a filesystem scan
-            docker.image('aquasec/trivy').inside {
-                sh "trivy fs . > trivyfs.txt"
+        }
+        stage('TRIVY FS SCAN') {
+            steps {
+                script {
+                    // Pull Trivy Docker image and run a filesystem scan
+                    docker.image('aquasec/trivy').inside {
+                        sh "trivy fs . > trivyfs.txt"
+                    }
+                }
             }
         }
     }
 }
-
-        }
-    }
-}
-
-
