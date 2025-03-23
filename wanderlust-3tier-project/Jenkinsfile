@@ -42,6 +42,18 @@ pipeline {
                     dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
                 }
             }
+
+            stage('TRIVY FS SCAN') {
+    steps {
+        script {
+            // Pull Trivy Docker image and run a filesystem scan
+            docker.image('aquasec/trivy').inside {
+                sh "trivy fs . > trivyfs.txt"
+            }
+        }
+    }
+}
+
         }
     }
 }
