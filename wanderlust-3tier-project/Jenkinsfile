@@ -42,13 +42,14 @@ pipeline {
         }
         stage('TRIVY FS SCAN') {
             steps {
-                script {
-                    // Pull Trivy Docker image and run a filesystem scan
-                    docker.image('aquasec/trivy').inside {
-                        sh "trivy fs . > trivyfs.txt"
-                    }
-                }
+                 script {
+            // Pull Trivy Docker image and run a filesystem scan with no default entrypoint
+            docker.image('aquasec/trivy').inside("--entrypoint=''") {
+                sh "trivy fs . > trivyfs.txt"
             }
         }
+    }
+}
+
     }
 }
