@@ -44,7 +44,7 @@ pipeline {
             steps {
                  script {
             // Pull Trivy Docker image and run a filesystem scan with no default entrypoint
-            docker.image('aquasec/trivy').inside("--entrypoint=''") {
+            docker.image('aquasec/trivy').inside("--entrypoint='' -e TRIVY_CACHE_DIR=/var/jenkins_home/.trivy") {
                 sh "trivy fs . > trivyfs.txt"
             }
         }
