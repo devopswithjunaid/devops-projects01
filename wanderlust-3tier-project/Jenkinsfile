@@ -10,13 +10,16 @@ pipeline {
                 git branch: 'main', url: 'https://github.com/rjshk013/devops-projects.git'
             }
         }
-        stage('Install Dependencies') {
-            steps {
-                dir('wanderlust-3tier-project') {
-                    sh "npm install"
-                }
-            }
+stage('Install Dependencies') {
+    steps {
+        dir('wanderlust-3tier-project/backend') {
+            sh "npm install"
         }
+        dir('wanderlust-3tier-project/frontend') {
+            sh "npm install"
+        }
+    }
+}
         stage('Run SonarQube') {
             environment {
                 scannerHome = tool 'Sonar'
