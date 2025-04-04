@@ -10,33 +10,31 @@ pipeline {
                 git branch: 'main', url: 'https://github.com/rjshk013/devops-projects.git'
             }
         }
-
-        stage('Install Dependencies') {
-            steps {
-                dir('wanderlust-3tier-project/backend') {
-                    sh "npm install"
-                }
-                dir('wanderlust-3tier-project/frontend') {
-                    sh "npm install"
-                }
-            }
+stage('Install Dependencies') {
+    steps {
+        dir('wanderlust-3tier-project/backend') {
+            sh "npm install"
         }
-
+        dir('wanderlust-3tier-project/frontend') {
+            sh "npm install"
+        }
+    }
+}
         stage('Run SonarQube') {
             environment {
                 scannerHome = tool 'Sonar'
             }
             steps {
                 withSonarQubeEnv(installationName: 'sonar-jenkins', credentialsId: 'sonar-token') {
-                    // Run sonar-scanner from workspace root to place report-task.txt correctly
-                    sh """${scannerHome}/bin/sonar-scanner \
-                        -Dsonar.projectKey=blog-app \
-                        -Dsonar.projectName=blog-app \
-                        -Dsonar.sources=wanderlust-3tier-project"""
+                    dir('wanderlust-3tier-project') {
+                        sh "${scannerHome}/bin/sonar-scanner \
+                            -Dsonar.projectKey=blog-app \
+                            -Dsonar.projectName=blog-app \
+                            -Dsonar.sources=."
+                    }
                 }
             }
         }
-
         stage('SonarQube Quality Gate') {
             steps {
                 timeout(time: 5, unit: 'MINUTES') {
@@ -44,7 +42,6 @@ pipeline {
                 }
             }
         }      
-
         stage('OWASP FS SCAN') {
             steps {
                 dir('wanderlust-3tier-project') {
@@ -53,16 +50,16 @@ pipeline {
                 }
             }
         }
-
         stage('TRIVY FS SCAN') {
             steps {
-                script {
-                    docker.image('aquasec/trivy').inside("--entrypoint='' -e TRIVY_CACHE_DIR=/var/jenkins_home/.trivy") {
-                        sh "trivy fs . > trivyfs.txt"
-                    }
-                }
+                 script {
+            // Pull Trivy Docker image and run a filesystem scan with no default entrypoint
+            docker.image('aquasec/trivy').inside("--entrypoint='' -e TRIVY_CACHE_DIR=/var/jenkins_home/.trivy") {
+                sh "trivy fs . > trivyfs.txt"
             }
         }
     }
 }
 
+    }
+}
