@@ -35,22 +35,13 @@ stage('Install Dependencies') {
                 }
             }
         }
-       stage("SonarQube Quality Gate Check") {
+        stage('SonarQube Quality Gate') {
             steps {
-                script {
-                def qualityGate = waitForQualityGate()
-                    
-                    if (qualityGate.status != 'OK') {
-                        echo "${qualityGate.status}"
-                        error "Quality Gate failed: ${qualityGateStatus}"
-                    }
-                    else {
-                        echo "${qualityGate.status}"
-                        echo "SonarQube Quality Gates Passed"
-                    }
+                timeout(time: 5, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
                 }
             }
-        }        
+        }      
         stage('OWASP FS SCAN') {
             steps {
                 dir('wanderlust-3tier-project') {
