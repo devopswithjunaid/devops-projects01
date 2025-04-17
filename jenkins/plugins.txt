@@ -1,0 +1,4 @@
+git
+ssh-slaves
+pipeline
+job-dsl
