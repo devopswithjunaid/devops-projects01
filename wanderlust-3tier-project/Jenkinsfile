@@ -1,10 +1,18 @@
 pipeline {
-    agent any
+    agent { label 'agent' }
+
     tools {
-        jdk 'jdk17'
+        jdk 'jdk21'
         nodejs 'node21'
-    }    
-    stages { 
+    }
+
+    environment {
+        IMAGE_TAG = "${BUILD_NUMBER}"
+        BACKEND_IMAGE = "rjshk013/wanderlust-backend"
+        FRONTEND_IMAGE = "rjshk013/wanderlust-frontend"
+    }
+
+    stages {
         stage('SCM Checkout') {
             steps {
                 git branch: 'main', url: 'https://github.com/rjshk013/devops-projects.git'
@@ -14,7 +22,7 @@ pipeline {
         stage('Install Dependencies') {
             steps {
                 dir('wanderlust-3tier-project/backend') {
-                    sh "npm install"
+                    sh "npm install || true"
                 }
                 dir('wanderlust-3tier-project/frontend') {
                     sh "npm install"
@@ -24,47 +32,89 @@ pipeline {
 
         stage('Run SonarQube') {
             environment {
-                scannerHome = tool 'Sonar'
+                scannerHome = tool 'sonar-scanner'
             }
             steps {
-                withSonarQubeEnv(installationName: 'sonar-jenkins', credentialsId: 'sonar-token') {
-                    // Run sonar-scanner from workspace root to place report-task.txt correctly
-                    sh """${scannerHome}/bin/sonar-scanner \
+                withSonarQubeEnv('sonar-server') {
+                    sh """
+                        ${scannerHome}/bin/sonar-scanner \
                         -Dsonar.projectKey=blog-app \
                         -Dsonar.projectName=blog-app \
-                        -Dsonar.sources=wanderlust-3tier-project"""
+                        -Dsonar.sources=wanderlust-3tier-project
+                    """
                 }
             }
         }
-// stage('SonarQube Quality Gate') {
-//     steps {
-//         script {
-//             echo "⏳ Waiting for SonarQube Quality Gate result (max 10 minutes)..."
-//         }
-//         timeout(time: 10, unit: 'MINUTES') {
-//             waitForQualityGate abortPipeline: true
-//         }
-//     }
-// } 
 
-        stage('OWASP FS SCAN') {
+        stage('Docker Build') {
             steps {
                 dir('wanderlust-3tier-project') {
-                    dependencyCheck additionalArguments: "--scan ./ --disableYarnAudit --disableNodeAudit --nvdApiKey 'be5b87e4-3b1a-4460-b1fe-533c943d39eb'", odcInstallation: 'DP-Check'
-                    dependencyCheckPublisher pattern: '**/dependency-check-report.xml'
+                    sh '''
+                        docker build -t ${BACKEND_IMAGE}:${IMAGE_TAG} ./backend
+                        docker build -t ${FRONTEND_IMAGE}:${IMAGE_TAG} ./frontend
+                    '''
                 }
             }
         }
 
-        stage('TRIVY FS SCAN') {
+        stage('Scan with Trivy') {
             steps {
                 script {
-                    docker.image('aquasec/trivy').inside("--entrypoint='' -e TRIVY_CACHE_DIR=/var/jenkins_home/.trivy") {
-                        sh "trivy fs . > trivyfs.txt"
+                    def images = [
+                        [name: "${BACKEND_IMAGE}:${IMAGE_TAG}", output: "trivy-backend.txt"],
+                        [name: "${FRONTEND_IMAGE}:${IMAGE_TAG}", output: "trivy-frontend.txt"]
+                    ]
+
+                    for (img in images) {
+                        echo "🔍 Scanning ${img.name}..."
+                        sh """
+                            mkdir -p wanderlust-3tier-project
+                            docker run --rm \
+                                -v /var/run/docker.sock:/var/run/docker.sock \
+                                -v \$HOME/.trivy-cache:/root/.cache/ \
+                                -v \$WORKSPACE/wanderlust-3tier-project:/scan-output \
+                                aquasec/trivy image \
+                                --scanners vuln \
+                                --severity HIGH,CRITICAL \
+                                --exit-code 0 \
+                                --format table \
+                                ${img.name} > wanderlust-3tier-project/${img.output}
+                        """
                     }
                 }
             }
         }
+
+        stage('Push to Docker Hub') {
+            steps {
+                withCredentials([string(credentialsId: 'docker-hub-token', variable: 'DOCKER_TOKEN')]) {
+                    sh '''
+                        echo "${DOCKER_TOKEN}" | docker login -u rjshk013 --password-stdin
+                        docker push ${BACKEND_IMAGE}:${IMAGE_TAG}
+                        docker push ${FRONTEND_IMAGE}:${IMAGE_TAG}
+                    '''
+                }
+            }
+        }
+
+        stage('Remote Deploy on Host with Docker Compose') {
+            steps {
+                sshagent(credentials: ['deploy-server-ssh']) {
+                    sh '''
+                        echo "🚀 Deploying on host with docker compose..."
+                        ssh -o StrictHostKeyChecking=no user@172.18.0.1 '
+                            cd /home/user/devops-projects/wanderlust-3tier-project &&
+                            docker compose build &&
+                            docker compose up -d
+                        '
+                    '''
+                }
+            }
+        }
+    } 
+    post {
+        always {
+            archiveArtifacts artifacts: 'wanderlust-3tier-project/trivy-*.txt', fingerprint: true
+        }
     }
 }
-
