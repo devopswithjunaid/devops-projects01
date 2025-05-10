@@ -46,6 +46,82 @@ pipeline {
             }
         }
 
+        stage('Trivy Filesystem Scan') {
+            steps {
+                script {
+                    def trivyDir = "${WORKSPACE}/trivy-reports"
+                    sh "mkdir -p ${trivyDir}"
+                    
+                    // Define targets for filesystem scanning
+                    def fsTargets = [
+                        [path: "${WORKSPACE}/wanderlust-3tier-project/backend", name: "backend-fs"],
+                        [path: "${WORKSPACE}/wanderlust-3tier-project/frontend", name: "frontend-fs"]
+                    ]
+                    
+                    // Run filesystem scans for source code vulnerabilities
+                    for (target in fsTargets) {
+                        echo "🔍 Scanning filesystem at ${target.path}..."
+                        
+                        // Scan for vulnerabilities in dependencies
+                        sh """
+                            docker run --rm \
+                                -v ${target.path}:/target \
+                                -v ${trivyDir}:/reports \
+                                aquasec/trivy fs \
+                                --security-checks vuln \
+                                --severity HIGH,CRITICAL \
+                                --exit-code 0 \
+                                --format table \
+                                /target > ${trivyDir}/trivy-${target.name}-vuln.txt
+                        """
+                        
+                        // Scan for security issues in configuration files
+                        sh """
+                            docker run --rm \
+                                -v ${target.path}:/target \
+                                -v ${trivyDir}:/reports \
+                                aquasec/trivy fs \
+                                --security-checks config \
+                                --severity HIGH,CRITICAL \
+                                --exit-code 0 \
+                                --format json \
+                                /target > ${trivyDir}/trivy-${target.name}-config.json
+                        """
+                        
+                        // Generate an HTML report for easier reading
+                        sh """
+                            docker run --rm \
+                                -v ${target.path}:/target \
+                                -v ${trivyDir}:/reports \
+                                aquasec/trivy fs \
+                                --security-checks vuln,config \
+                                --severity HIGH,CRITICAL \
+                                --exit-code 0 \
+                                --format template \
+                                --template '@/contrib/html.tpl' \
+                                /target > ${trivyDir}/trivy-${target.name}-report.html
+                        """
+                    }
+                    
+                    // Add filesystem scan summary to the main report
+                    sh """
+                        echo "\\n## Source Code Vulnerability Scan" >> ${trivyDir}/summary.md
+                        echo "### Backend Source Vulnerabilities" >> ${trivyDir}/summary.md
+                        echo '```' >> ${trivyDir}/summary.md
+                        grep -A 10 "CRITICAL\\|HIGH" ${trivyDir}/trivy-backend-fs-vuln.txt | head -20 >> ${trivyDir}/summary.md
+                        echo "\\n... (See full report for more details)" >> ${trivyDir}/summary.md
+                        echo '```' >> ${trivyDir}/summary.md
+                        
+                        echo "\\n### Frontend Source Vulnerabilities" >> ${trivyDir}/summary.md
+                        echo '```' >> ${trivyDir}/summary.md
+                        grep -A 10 "CRITICAL\\|HIGH" ${trivyDir}/trivy-frontend-fs-vuln.txt | head -20 >> ${trivyDir}/summary.md
+                        echo "\\n... (See full report for more details)" >> ${trivyDir}/summary.md
+                        echo '```' >> ${trivyDir}/summary.md
+                    """
+                }
+            }
+        }
+
         stage('Docker Build') {
             steps {
                 dir('wanderlust-3tier-project') {
@@ -57,13 +133,10 @@ pipeline {
             }
         }
 
-        stage('Scan with Trivy') {
+        stage('Trivy Image Scan') {
             steps {
                 script {
                     def trivyDir = "${WORKSPACE}/trivy-reports"
-                    
-                    // Create reports directory
-                    sh "mkdir -p ${trivyDir}"
                     
                     // Define scan configurations
                     def images = [
@@ -125,12 +198,12 @@ pipeline {
                         echo "## Images Scanned" >> ${trivyDir}/summary.md
                         echo "- ${BACKEND_IMAGE}:${IMAGE_TAG}" >> ${trivyDir}/summary.md
                         echo "- ${FRONTEND_IMAGE}:${IMAGE_TAG}" >> ${trivyDir}/summary.md
-                        echo "\\n## Backend Vulnerabilities" >> ${trivyDir}/summary.md
+                        echo "\\n## Backend Container Vulnerabilities" >> ${trivyDir}/summary.md
                         echo '```' >> ${trivyDir}/summary.md
                         grep -A 10 "CRITICAL\\|HIGH" ${trivyDir}/trivy-backend-report.txt | head -20 >> ${trivyDir}/summary.md
                         echo "\\n... (See full report for more details)" >> ${trivyDir}/summary.md
                         echo '```' >> ${trivyDir}/summary.md
-                        echo "\\n## Frontend Vulnerabilities" >> ${trivyDir}/summary.md
+                        echo "\\n## Frontend Container Vulnerabilities" >> ${trivyDir}/summary.md
                         echo '```' >> ${trivyDir}/summary.md 
                         grep -A 10 "CRITICAL\\|HIGH" ${trivyDir}/trivy-frontend-report.txt | head -20 >> ${trivyDir}/summary.md
                         echo "\\n... (See full report for more details)" >> ${trivyDir}/summary.md
