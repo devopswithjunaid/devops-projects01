@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1.4
-
 # -------- Stage 1: Dependencies --------
 FROM node:21-alpine AS deps
 WORKDIR /app
@@ -7,15 +5,11 @@ WORKDIR /app
 # Copy npmrc first for better caching
 COPY .npmrc ./
 
-# Set npm cache config
-ENV NPM_CONFIG_CACHE=/npm-cache
-
 # Copy package files for dependency installation
 COPY package*.json ./
 
 # Install dependencies with optimized settings
-RUN --mount=type=cache,target=/npm-cache \
-    npm ci --prefer-offline --no-audit || npm install --prefer-offline --no-audit
+RUN npm ci --prefer-offline --no-audit || npm install --prefer-offline --no-audit
 
 # -------- Stage 2: Runtime --------
 FROM node:21-alpine AS runtime
