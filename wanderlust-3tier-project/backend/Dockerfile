@@ -10,8 +10,8 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install dependencies with optimized flags
-RUN npm ci --no-audit --prefer-offline --no-fund && \
-    npm cache clean --force
+RUN npm ci --no-audit --prefer-offline --no-fund || npm install --no-audit --prefer-offline --no-fund
+RUN npm cache clean --force
 
 # ===================
 # Stage 2: Build stage
@@ -23,13 +23,8 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY package*.json ./
 
-# Copy only necessary source files
-COPY src/ ./src/
-COPY config/ ./config/ 
-COPY .env.sample ./
-
-# Build/compile if needed (uncomment if you have a build step)
-# RUN npm run build
+# Copy all application code (we'll use a more generic approach)
+COPY . .
 
 # ==========================
 # Stage 3: Production stage
@@ -44,14 +39,12 @@ ENV NODE_ENV=production
 COPY package*.json ./
 
 # Install only production dependencies with optimized flags
-RUN npm ci --only=production --no-audit --prefer-offline --no-fund && \
-    npm cache clean --force
+RUN npm ci --only=production --no-audit --prefer-offline --no-fund || npm install --only=production --no-audit --prefer-offline --no-fund
+RUN npm cache clean --force
 
-# Copy application code from build stage
-COPY --from=build /app/src ./src
-COPY --from=build /app/config ./config
-COPY --from=build /app/package.json ./
-COPY --from=build /app/.env.sample ./.env
+# Copy application code from build stage (copy everything except node_modules)
+COPY --from=build /app/. ./
+RUN rm -rf node_modules
 
 # Create non-root user with minimal privileges using Alpine syntax
 RUN addgroup -S appgroup && \
@@ -64,9 +57,5 @@ USER appuser
 # Expose API port
 EXPOSE 5000
 
-# Set health check
-HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-    CMD wget -q --spider http://localhost:5000/health || exit 1
-
 # Use exec form of CMD for proper signal handling
-CMD ["node", "src/index.js"]
+CMD ["npm", "start"]
