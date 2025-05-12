@@ -1,55 +1,37 @@
-# Use BuildKit features
-# syntax=docker/dockerfile:1.4
-
 # -------- Stage 1: Dependencies --------
 FROM node:21-alpine AS deps
 WORKDIR /app
 
-# Copy only package files to leverage layer caching
+# Copy package files for dependency installation
 COPY package*.json ./
 
-# Install all dependencies with optimized flags
-RUN npm ci --no-audit --prefer-offline --no-fund && \
-    npm cache clean --force
+# Install all dependencies (including dev dependencies needed for build)
+RUN npm ci --prefer-offline --no-audit || npm install --prefer-offline --no-audit
 
-# -------- Stage 2: Build Stage --------
+# -------- Stage 2: Build --------
 FROM node:21-alpine AS builder
 WORKDIR /app
 
-# Copy dependencies from previous stage
+# Copy dependencies from deps stage
 COPY --from=deps /app/node_modules ./node_modules
-COPY package*.json ./
+COPY . .
 
-# Copy only the source files needed
-COPY src/ ./src/
-COPY public/ ./public/
-COPY *.js *.json *.html ./
-COPY .env.sample ./
+# Build the application
+RUN npm run build
 
-# Build the app (uncomment if using a build process)
-# RUN npm run build
-
-# -------- Stage 3: Runtime Stage --------
+# -------- Stage 3: Runtime (minimal) --------
 FROM node:21-alpine AS runtime
 WORKDIR /app
 
-# Set environment to production
-ENV NODE_ENV=production
-
-# Install only production dependencies
+# Install only production dependencies for serving
 COPY package*.json ./
-RUN npm ci --only=production --no-audit --prefer-offline --no-fund && \
-    npm cache clean --force
+RUN npm ci --only=production --prefer-offline --no-audit || npm install --only=production --prefer-offline --no-audit \
+    && npm cache clean --force
 
-# Copy necessary files from builder stage
-COPY --from=builder /app/src ./src
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/*.js ./
-COPY --from=builder /app/*.json ./
-COPY --from=builder /app/*.html ./
-COPY --from=builder /app/.env.sample ./.env.local
+# Copy built files from builder stage
+COPY --from=builder /app/dist ./dist
 
-# Create non-root user with minimal permissions
+# Create non-root user
 RUN addgroup -S appgroup && \
     adduser -S appuser -G appgroup && \
     chown -R appuser:appgroup /app
@@ -57,8 +39,9 @@ RUN addgroup -S appgroup && \
 # Switch to non-root user
 USER appuser
 
-# Expose port
-EXPOSE 5173
+# Expose the app port
+EXPOSE 4173
 
-# Use exec form of CMD for proper signal handling
-CMD ["npm", "run", "dev", "--", "--host"]
+# Run the preview server (for production builds)
+CMD ["npm", "run", "preview", "--", "--host"]
+
