@@ -26,8 +26,6 @@ WORKDIR /app
 # Copy only what’s needed from builder
 COPY --from=builder /app /app
 
-WORKDIR /app  # Add this line to be explicit before the COPY
-
 # Copy environment config (you may already have this in /app, but keep it explicit)
 COPY .env.sample .env.local
 
