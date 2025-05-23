@@ -1,18 +1,75 @@
-name: Docker Image CI
+name: Build Docker Images
 
 on:
   push:
-    branches: [ "main" ]
+    branches:
+      - main # Trigger this workflow on pushes to the 'main' branch
   pull_request:
-    branches: [ "main" ]
+    branches:
+      - main # Also trigger on pull requests to 'main' for validation
 
 jobs:
-
-  build:
-
-    runs-on: ubuntu-latest
+  build_backend_image:
+    runs-on: ubuntu-latest # The type of runner that the job will run on
+    env:
+      IMAGE_NAME: wanderlust-backend # Define a variable for the image name
 
     steps:
-    - uses: actions/checkout@v4
-    - name: Build the Docker image
-      run: docker build . --file Dockerfile --tag my-image-name:$(date +%s)
+      - name: Checkout repository
+        uses: actions/checkout@v4 # Checks out your repository under $GITHUB_WORKSPACE
+
+      # Optional: Login to Docker Hub if you plan to push images
+      # Uncomment the following lines and set up DOCKER_USERNAME/DOCKER_PASSWORD secrets
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3 # Sets up Docker Buildx, required for build-push-action
+
+      - name: Build and tag backend Docker image
+        uses: docker/build-push-action@v5 # Builds and optionally pushes Docker images
+        with:
+          context: ./wanderlust-3tier-project/backend # The build context for the Dockerfile
+          file: ./wanderlust-3tier-project/backend/Dockerfile # Path to the Dockerfile
+          push: true # Set to 'true' to push the image to Docker Hub (or your registry)
+          tags: |
+            ${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:latest
+            ${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ github.sha }} # Tag with commit SHA for uniqueness
+          cache-from: type=gha # Use GitHub Actions cache for faster builds
+          cache-to: type=gha,mode=max # Cache layers for future builds
+
+  build_frontend_image:
+    runs-on: ubuntu-latest # The type of runner that the job will run on
+    env:
+      IMAGE_NAME: wanderlust-frontend # Define a variable for the image name
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4 # Checks out your repository under $GITHUB_WORKSPACE
+
+      # Optional: Login to Docker Hub if you plan to push images
+      # Uncomment the following lines and set up DOCKER_USERNAME/DOCKER_PASSWORD secrets
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3 # Sets up Docker Buildx
+
+      - name: Build and tag frontend Docker image
+        uses: docker/build-push-action@v5 # Builds and optionally pushes Docker images
+        with:
+          context: ./wanderlust-3tier-project/frontend # The build context for the Dockerfile
+          file: ./wanderlust-3tier-project/frontend/Dockerfile # Path to the Dockerfile
+          push: true # Set to 'true' to push the image to Docker Hub (or your registry)
+          tags: |
+            ${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:latest
+            ${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ github.sha }} # Tag with commit SHA for uniqueness
+          cache-from: type=gha # Use GitHub Actions cache for faster builds
+          cache-to: type=gha,mode=max # Cache layers for future builds
+
