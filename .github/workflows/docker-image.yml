@@ -53,6 +53,8 @@ jobs:
 
       - name: List frontend directory contents
         run: ls -al ./wanderlust-3tier-project/frontend/
+      - name: Check .env.sample permissions
+        run: ls -l ./wanderlust-3tier-project/frontend/.env.sample     
 
       # Optional: Login to Docker Hub if you plan to push images
       # Uncomment the following lines and set up DOCKER_USERNAME/DOCKER_PASSWORD secrets
