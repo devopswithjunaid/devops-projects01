@@ -50,6 +50,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4 # Checks out your repository under $GITHUB_WORKSPACE
 
+
+      - name: List frontend directory contents
+        run: ls -al ./wanderlust-3tier-project/frontend/
+
       # Optional: Login to Docker Hub if you plan to push images
       # Uncomment the following lines and set up DOCKER_USERNAME/DOCKER_PASSWORD secrets
       - name: Login to Docker Hub
