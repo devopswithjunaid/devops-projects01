@@ -71,7 +71,7 @@ jobs:
         uses: docker/build-push-action@v5 # Builds and optionally pushes Docker images
         with:
           context: ./wanderlust-3tier-project/frontend # The build context for the Dockerfile
-          file: ./wanderlust-3tier-project/frontend/Dockerfile # Path to the Dockerfile
+          file: ./wanderlust-3tier-project/frontend/Dockerfile_optimized # Path to the Dockerfile
           push: true # Set to 'true' to push the image to Docker Hub (or your registry)
           tags: |
             ${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:latest
