@@ -145,5 +145,4 @@ jobs:
         with:
           image-ref: '${{ github.repository_owner }}/wanderlust-frontend:latest'
           format: 'table'
-          severity: 'CRITICAL,HIGH'        
-
+          severity: 'CRITICAL,HIGH'     
