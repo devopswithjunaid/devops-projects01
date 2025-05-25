@@ -1,0 +1,310 @@
+name: Build Docker Images with Security Scanning
+
+on:
+  push:
+    branches:
+      - main # Trigger this workflow on pushes to the 'main' branch
+  pull_request:
+    branches:
+      - main # Also trigger on pull requests to 'main' for validation
+
+jobs:
+  # 🔍 Filesystem & Secret Scanning - runs first for fast feedback
+  security_scan:
+    runs-on: ubuntu-latest
+    name: 🔍 Code Security Analysis
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 1. FILESYSTEM SCANNING - Source code & dependencies
+      - name: Scan filesystem for vulnerabilities
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: './wanderlust-3tier-project'
+          format: 'sarif'
+          output: 'trivy-filesystem-results.sarif'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+          exit-code: '1'  # Fail if vulnerabilities found
+
+      - name: Upload filesystem vulnerabilities to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-filesystem-results.sarif'
+          category: 'filesystem-vulnerabilities'
+
+      # 2. SECRET DETECTION - API keys, passwords, tokens
+      - name: Scan for exposed secrets
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          scanners: 'secret'
+          format: 'sarif'
+          output: 'trivy-secrets-results.sarif'
+          severity: 'CRITICAL,HIGH,MEDIUM,LOW'
+          exit-code: '1'  # Fail if secrets found
+
+      - name: Upload secrets scan to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-secrets-results.sarif'
+          category: 'secret-detection'
+
+      # Generate readable reports
+      - name: Generate filesystem vulnerability report
+        uses: aquasecurity/trivy-action@master
+        if: always()
+        with:
+          scan-type: 'fs'
+          scan-ref: './wanderlust-3tier-project'
+          format: 'table'
+          output: 'filesystem-vulnerabilities.txt'
+          severity: 'CRITICAL,HIGH,MEDIUM,LOW'
+
+      - name: Generate secrets detection report
+        uses: aquasecurity/trivy-action@master
+        if: always()
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          scanners: 'secret'
+          format: 'table'
+          output: 'secrets-detection.txt'
+
+      - name: Upload security scan reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: code-security-reports
+          path: |
+            filesystem-vulnerabilities.txt
+            secrets-detection.txt
+
+  build_backend_image:
+    runs-on: ubuntu-latest
+    needs: security_scan  # Only run if code security passes
+    name: 🐳 Build & Scan Backend Image
+    env:
+      IMAGE_NAME: wanderlust-backend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build image locally for scanning (don't push yet)
+      - name: Build backend Docker image for scanning
+        uses: docker/build-push-action@v5
+        with:
+          context: ./wanderlust-3tier-project/backend
+          file: ./wanderlust-3tier-project/backend/Dockerfile
+          push: false  # Don't push yet - scan first
+          load: true   # Load for local scanning
+          tags: |
+            ${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:latest
+            ${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # 3. IMAGE SCANNING - Docker image vulnerabilities
+      - name: Scan backend Docker image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: '${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:latest'
+          format: 'sarif'
+          output: 'trivy-backend-image-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'  # Fail if critical/high vulnerabilities found
+
+      - name: Upload backend image scan to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-backend-image-results.sarif'
+          category: 'backend-image-vulnerabilities'
+
+      - name: Generate backend image vulnerability report
+        uses: aquasecurity/trivy-action@master
+        if: always()
+        with:
+          image-ref: '${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:latest'
+          format: 'table'
+          output: 'backend-image-vulnerabilities.txt'
+          severity: 'CRITICAL,HIGH,MEDIUM,LOW'
+
+      - name: Upload backend image report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backend-image-security-report
+          path: backend-image-vulnerabilities.txt
+
+      # ✅ Only push to registry if image scan passes
+      - name: Push backend image to registry
+        uses: docker/build-push-action@v5
+        with:
+          context: ./wanderlust-3tier-project/backend
+          file: ./wanderlust-3tier-project/backend/Dockerfile
+          push: true  # Now safe to push
+          tags: |
+            ${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:latest
+            ${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          cache-from: type=gha
+
+  build_frontend_image:
+    runs-on: ubuntu-latest
+    needs: security_scan  # Only run if code security passes
+    name: 🎨 Build & Scan Frontend Image
+    env:
+      IMAGE_NAME: wanderlust-frontend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: List frontend directory contents
+        run: ls -al ./wanderlust-3tier-project/frontend/
+
+      - name: Check .env.sample permissions
+        run: ls -l ./wanderlust-3tier-project/frontend/.env.sample
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build image locally for scanning (don't push yet)
+      - name: Build frontend Docker image for scanning
+        uses: docker/build-push-action@v5
+        with:
+          context: ./wanderlust-3tier-project/frontend
+          file: ./wanderlust-3tier-project/frontend/Dockerfile_optimized
+          push: false  # Don't push yet - scan first
+          load: true   # Load for local scanning
+          tags: |
+            ${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:latest
+            ${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # 3. IMAGE SCANNING - Docker image vulnerabilities
+      - name: Scan frontend Docker image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: '${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:latest'
+          format: 'sarif'
+          output: 'trivy-frontend-image-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '1'  # Fail if critical/high vulnerabilities found
+
+      - name: Upload frontend image scan to GitHub Security
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-frontend-image-results.sarif'
+          category: 'frontend-image-vulnerabilities'
+
+      - name: Generate frontend image vulnerability report
+        uses: aquasecurity/trivy-action@master
+        if: always()
+        with:
+          image-ref: '${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:latest'
+          format: 'table'
+          output: 'frontend-image-vulnerabilities.txt'
+          severity: 'CRITICAL,HIGH,MEDIUM,LOW'
+
+      - name: Upload frontend image report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: frontend-image-security-report
+          path: frontend-image-vulnerabilities.txt
+
+      # ✅ Only push to registry if image scan passes
+      - name: Push frontend image to registry
+        uses: docker/build-push-action@v5
+        with:
+          context: ./wanderlust-3tier-project/frontend
+          file: ./wanderlust-3tier-project/frontend/Dockerfile_optimized
+          push: true  # Now safe to push
+          tags: |
+            ${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:latest
+            ${{ github.repository_owner }}/${{ env.IMAGE_NAME }}:${{ github.sha }}
+          cache-from: type=gha
+
+  # 📊 Security Summary Report
+  security_summary:
+    runs-on: ubuntu-latest
+    needs: [build_backend_image, build_frontend_image]
+    if: always()  # Run even if previous jobs fail
+    name: 📊 Security Summary
+
+    steps:
+      - name: Create security summary
+        run: |
+          echo "# 🔒 Security Scan Summary" > security-summary.md
+          echo "" >> security-summary.md
+          echo "## Scans Performed:" >> security-summary.md
+          echo "- ✅ **Filesystem Vulnerabilities**: Source code and dependencies" >> security-summary.md
+          echo "- ✅ **Secret Detection**: API keys, passwords, and tokens" >> security-summary.md
+          echo "- ✅ **Backend Image**: Docker image vulnerabilities" >> security-summary.md
+          echo "- ✅ **Frontend Image**: Docker image vulnerabilities" >> security-summary.md
+          echo "" >> security-summary.md
+          echo "## 📊 Available Reports:" >> security-summary.md
+          echo "- **code-security-reports**: Filesystem vulnerabilities + Secret detection" >> security-summary.md
+          echo "- **backend-image-security-report**: Backend Docker image analysis" >> security-summary.md
+          echo "- **frontend-image-security-report**: Frontend Docker image analysis" >> security-summary.md
+          echo "" >> security-summary.md
+          echo "## 🔍 View Results:" >> security-summary.md
+          echo "- **GitHub Security Tab**: Integrated vulnerability tracking" >> security-summary.md
+          echo "- **Action Artifacts**: Download detailed reports" >> security-summary.md
+          echo "- **Pull Request**: Security findings shown in PR checks" >> security-summary.md
+          echo "" >> security-summary.md
+          echo "Generated: $(date)" >> security-summary.md
+          echo "Commit: ${{ github.sha }}" >> security-summary.md
+
+      - name: Upload security summary
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-summary
+          path: security-summary.md
+
+  sonarqube_analysis:
+    runs-on: ubuntu-latest
+    needs: [build_backend_image, build_frontend_image]
+    name: 📈 Code Quality Analysis
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: SonarQube Scan
+        uses: sonarsource/sonarqube-scan-action@v2.3.0
+        env:
+          SONAR_TOKEN: ${{ secrets.SONARQUBE_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}

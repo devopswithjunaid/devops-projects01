@@ -1,0 +1,57 @@
+# .trivyignore - Focused on Filesystem, Image & Secret scanning
+
+# =============================================================================
+# FILESYSTEM VULNERABILITIES - False positives in dependencies
+# =============================================================================
+
+# Example: Ignore known false positives in dev dependencies
+# pkg:npm/dev-dependency@1.0.0
+
+# Ignore vulnerabilities in test files (not production code)
+**/test/**
+**/*test*
+**/*.test.js
+**/*.test.ts
+**/*.spec.js
+**/*.spec.ts
+
+# Ignore sample/demo files
+**/*sample*
+**/*example*
+**/examples/**
+
+# =============================================================================
+# SECRET DETECTION - False positives for secrets
+# =============================================================================
+
+# Ignore example secrets in documentation
+**/*.md
+**/README*
+**/docs/**
+
+# Ignore placeholder secrets in config templates
+**/.env.sample
+**/.env.example
+**/.env.template
+**/config.example.*
+
+# Ignore test secrets (not real secrets)
+**/tests/fixtures/**
+**/test-data/**
+
+# =============================================================================
+# DOCKER IMAGE VULNERABILITIES - Base image issues
+# =============================================================================
+
+# If you need to ignore base image vulnerabilities you can't control
+# (Use sparingly - better to update base images)
+# pkg:deb/ubuntu@20.04 LOW
+# pkg:alpine/alpine-baselayout@3.2.0 MEDIUM
+
+# =============================================================================
+# SPECIFIC CVE IGNORES - Document reason and date
+# =============================================================================
+
+# Example format:
+# CVE-2024-12345  # Added 2024-01-15: False positive for our Node.js version
+# CVE-2024-67890  # Added 2024-01-15: Dev dependency, no production impact
