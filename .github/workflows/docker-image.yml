@@ -95,9 +95,27 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
+      - name: Verify SonarQube configuration
+        run: |
+          if [ -z "${{ secrets.SONAR_TOKEN }}" ]; then
+            echo "ERROR: SONAR_TOKEN secret is not set"
+            exit 1
+          fi
+          if [ -z "${{ secrets.SONAR_HOST_URL }}" ]; then
+            echo "ERROR: SONAR_HOST_URL secret is not set"
+            exit 1
+          fi
+          echo "SonarQube URL: ${{ secrets.SONAR_HOST_URL }}"
+
       - name: SonarQube Scan
-        uses: sonarsource/sonarqube-scan-action@master
+        uses: sonarsource/sonarqube-scan-action@v2.3.0  # Use specific version instead of @master
         env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }} //Sonar Token generated 
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        with:
+          args: >
+            -Dsonar.projectKey=cicd-demo
+            -Dsonar.projectName=cicd-demo
+            -Dsonar.sources=./wanderlust-3tier-project
+            -Dsonar.exclusions=**/node_m
 
