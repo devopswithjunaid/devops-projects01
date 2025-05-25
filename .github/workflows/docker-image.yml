@@ -79,3 +79,25 @@ jobs:
           cache-from: type=gha # Use GitHub Actions cache for faster builds
           cache-to: type=gha,mode=max # Cache layers for future builds
 
+  sonarqube_analysis:
+    runs-on: ubuntu-latest
+    needs: [build_backend_image, build_frontend_image]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+
+      - name: SonarQube Scan
+        uses: sonarsource/sonarqube-scan-action@master
+        env:
+          SONAR_HOST_URL: http://157.245.98.255:9001
+          SONAR_TOKEN: ${{ secrets.SONARQUBE_TOKEN }}
+          SONAR_PROJECT_KEY: cicd-demo          
+
