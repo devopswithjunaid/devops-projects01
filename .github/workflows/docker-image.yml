@@ -100,5 +100,5 @@ jobs:
         env:
           SONAR_HOST_URL: http://157.245.98.255:9001
           SONAR_TOKEN: ${{ secrets.SONARQUBE_TOKEN }}
-          SONAR_PROJECT_KEY: cicd--demo          
+          SONAR_PROJECT_KEY: cicd-demo          
 
