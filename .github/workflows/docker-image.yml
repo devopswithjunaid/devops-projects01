@@ -97,8 +97,8 @@ jobs:
 
       - name: SonarQube Scan
         uses: sonarsource/sonarqube-scan-action@master
-        env:
-          SONAR_HOST_URL: http://157.245.98.255:9001
-          SONAR_TOKEN: ${{ secrets.SONARQUBE_TOKEN }}
-          SONAR_PROJECT_KEY: cicd-demo          
+        with:
+          hostUrl: http://157.245.98.255:9001
+          sonarQubeToken: ${{ secrets.SONARQUBE_TOKEN }}
+          projectKey: cicd-demo      
 
