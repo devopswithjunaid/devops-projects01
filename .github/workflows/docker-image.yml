@@ -97,8 +97,8 @@ jobs:
 
       - name: Verify SonarQube configuration
         run: |
-          if [ -z "${{ secrets.SONAR_TOKEN }}" ]; then
-            echo "ERROR: SONAR_TOKEN secret is not set"
+          if [ -z "${{ secrets.SONARQUBE_TOKEN}}}" ]; then
+            echo "ERROR: SONARQUBE_TOKEN} secret is not set"
             exit 1
           fi
           if [ -z "${{ secrets.SONAR_HOST_URL }}" ]; then
