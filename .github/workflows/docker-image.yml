@@ -388,16 +388,16 @@ jobs:
             cd ${{ secrets.DEPLOY_PROJECT_PATH }}
             
             echo "📥 Pulling latest Docker images..."
-            docker compose pull
+            docker compose -f docker-compose_updated.yaml pull
             
             echo "🔄 Restarting services with Docker Compose..."
-            docker compose up -d
+            docker compose -f docker-compose_updated.yaml up -d
             
             echo "⏳ Waiting for services to be ready..."
             sleep 30
             
             echo "🏥 Checking service health..."
-            docker compose ps
+            docker compose -f docker-compose_updated.yaml ps
             
             echo "✅ Deployment completed successfully!"
           '
