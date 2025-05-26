@@ -10,6 +10,7 @@ services:
 
   backend:
     container_name: backend
+    build: ./backend
     env_file:
       - ./backend/.env.sample
     ports:
@@ -19,6 +20,7 @@ services:
 
   frontend:
     container_name: frontend
+    build: ./frontend
     env_file:
       - ./frontend/.env.sample
     ports:
