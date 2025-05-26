@@ -11,8 +11,8 @@ services:
   backend:
     container_name: backend
     environment:
-      - MONGODB_URI="mongodb://mongo/wanderlust"
-      - CORS_ORIGIN="http://localhost:5173"
+      - MONGODB_URI=mongodb://mongo/wanderlust
+      - CORS_ORIGIN=http://localhost:5173
     # env_file:
     #   - ./backend/.env.sample
     ports:
@@ -24,7 +24,7 @@ services:
     container_name: frontend
     # image: rjshk013/wanderlust-frontend:latest 
     environment:
-      - VITE_API_PATH="http://localhost:5000"
+      - VITE_API_PATH=http://localhost:5000
     # env_file:
     #   - ./frontend/.env.sample
     ports:
