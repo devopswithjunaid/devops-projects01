@@ -10,6 +10,7 @@ services:
 
   backend:
     container_name: backend
+    build: ./backend
     environment:
       - MONGODB_URI=mongodb://mongo/wanderlust
       - CORS_ORIGIN=http://localhost:5173
@@ -22,6 +23,7 @@ services:
 
   frontend:
     container_name: frontend
+    build: ./frontend
     # image: rjshk013/wanderlust-frontend:latest 
     environment:
       - VITE_API_PATH=http://localhost:5000
