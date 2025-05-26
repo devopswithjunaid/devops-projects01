@@ -1,40 +1,47 @@
-# -------- Stage 1: Build Stage --------
-FROM node:21 AS builder
-
-# Set working directory
+# -------- Stage 1: Dependencies --------
+FROM node:21-alpine AS deps
 WORKDIR /app
 
-# Copy dependency files
+# Copy package files for dependency installation
 COPY package*.json ./
 
-# Install all dependencies
-RUN npm install
+# Install all dependencies (including dev dependencies needed for build)
+RUN npm ci --prefer-offline --no-audit || npm install --prefer-offline --no-audit
 
-# Copy all source files
-COPY . .
-
-# Build your app (only if applicable, e.g., for production builds)
-# RUN npm run build
-
-
-# -------- Stage 2: Runtime Stage --------
-FROM node:21-slim
-
-# Set working directory
+# -------- Stage 2: Build --------
+FROM node:21-alpine AS builder
 WORKDIR /app
 
-# Copy only what’s needed from builder
-COPY --from=builder /app /app
+# Copy dependencies from deps stage
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
 
-# Copy environment config (you may already have this in /app, but keep it explicit)
-COPY .env.sample .env.local
+# Build the application
+RUN npm run build
 
-# Add non-root user
-RUN adduser --disabled-password --gecos "" appuser && chown -R appuser /app
+# -------- Stage 3: Runtime (minimal) --------
+FROM node:21-alpine AS runtime
+WORKDIR /app
+
+# Install only production dependencies for serving
+COPY package*.json ./
+RUN npm ci --only=production --prefer-offline --no-audit || npm install --only=production --prefer-offline --no-audit \
+    && npm cache clean --force
+
+# Copy built files from builder stage
+COPY --from=builder /app/dist ./dist
+
+# Create non-root user
+RUN addgroup -S appgroup && \
+    adduser -S appuser -G appgroup && \
+    chown -R appuser:appgroup /app
+
+# Switch to non-root user
 USER appuser
 
 # Expose the app port
-EXPOSE 5173
+EXPOSE 4173
 
-# Run the app
-CMD ["npm", "run", "dev", "--", "--host"]
+# Run the preview server (for production builds)
+CMD ["npm", "run", "preview", "--", "--host"]
+
