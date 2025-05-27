@@ -6,7 +6,9 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install all dependencies (including dev dependencies needed for build)
-RUN npm ci --prefer-offline --no-audit || npm install --prefer-offline --no-audit
+#RUN npm ci --prefer-offline --no-audit || npm install --prefer-offline --no-audit
+RUN npm ci --prefer-offline --no-audit --no-optional || npm install --prefer-offline --no-audit --no-optional
+
 
 # -------- Stage 2: Build --------
 FROM node:21-alpine AS builder
