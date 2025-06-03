@@ -13,9 +13,6 @@ RUN npm install
 # Now copy the rest of your application code
 COPY . .
 
-# Safely copy environment configuration file
-COPY .env.sample .env
-
 # Use a non-root user to run your container for better security
 RUN adduser --disabled-password --gecos "" appuser && chown -R appuser /app
 USER appuser
