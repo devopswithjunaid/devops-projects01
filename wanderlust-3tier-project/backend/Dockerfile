@@ -1,39 +1,27 @@
-# =====================
-# Stage 1: Build stage
-# =====================
-FROM node:21 as build
+# Use a specific version of node
+FROM node:21
 
+# Set the working directory
 WORKDIR /app
 
-# Copy only necessary files to install dependencies
+# Copy package.json and package-lock.json first to leverage Docker cache
 COPY package*.json ./
 
-# Install all dependencies (including dev)
+# Install dependencies
 RUN npm install
 
-# Copy the rest of the application code
+# Now copy the rest of your application code
 COPY . .
 
-# ==========================
-# Stage 2: Production stage
-# ==========================
-FROM node:21-slim
-
-WORKDIR /app
-
-# Copy only necessary files from the build stage
-COPY --from=build /app ./
-
-# Install only production dependencies
-RUN npm install --omit=dev
-
-# Copy environment configuration file (optional if used during build)
+# Safely copy environment configuration file
 COPY .env.sample .env
 
-# Create non-root user for better security
+# Use a non-root user to run your container for better security
 RUN adduser --disabled-password --gecos "" appuser && chown -R appuser /app
 USER appuser
 
+# Expose the port your app runs on
 EXPOSE 5000
 
+# Command to start your application
 CMD ["npm", "start"]
