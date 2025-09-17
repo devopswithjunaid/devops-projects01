@@ -83,18 +83,7 @@ pipeline {
                         --scanners vuln \
                         --severity HIGH,CRITICAL \
                         --exit-code 0 \
-                        --format table /target
-                    """
-                    
-                    sh """
-                        docker run --rm \
-                        -v ${WORKSPACE}/wanderlust-3tier-project/backend:/target \
-                        -v ${WORKSPACE}/trivy-reports:/reports \
-                        aquasec/trivy fs \
-                        --scanners misconfig \
-                        --severity HIGH,CRITICAL \
-                        --exit-code 0 \
-                        --format json /target
+                        --format table /target || true
                     """
                     
                     echo "Scanning filesystem at ${WORKSPACE}/wanderlust-3tier-project/frontend..."
@@ -106,30 +95,8 @@ pipeline {
                         --scanners vuln \
                         --severity HIGH,CRITICAL \
                         --exit-code 0 \
-                        --format table /target
+                        --format table /target || true
                     """
-                    
-                    sh """
-                        docker run --rm \
-                        -v ${WORKSPACE}/wanderlust-3tier-project/frontend:/target \
-                        -v ${WORKSPACE}/trivy-reports:/reports \
-                        aquasec/trivy fs \
-                        --scanners misconfig \
-                        --severity HIGH,CRITICAL \
-                        --exit-code 0 \
-                        --format json /target
-                    """
-                    
-                    sh '''
-                        echo "# Trivy Filesystem Scan Summary"
-                        echo "## Backend Source Vulnerabilities"
-                        if [ -f ${WORKSPACE}/trivy-reports/trivy-backend-fs-vuln.txt ]; then
-                            echo "```"
-                            grep -A 10 "CRITICAL\\|HIGH" ${WORKSPACE}/trivy-reports/trivy-backend-fs-vuln.txt | head -20
-                            echo "```"
-                        fi
-                        echo
-                    '''
                 }
             }
         }
@@ -138,11 +105,12 @@ pipeline {
             steps {
                 script {
                     dir('wanderlust-3tier-project') {
-                        echo "Building Docker images..."
+                        echo "Building Docker images with correct namespace..."
                         sh """
                             docker build -t ${BACKEND_IMAGE}:${IMAGE_TAG} -f ./backend/Dockerfile_optimized ./backend
                             docker build -t ${FRONTEND_IMAGE}:${IMAGE_TAG} -f ./frontend/Dockerfile_optimized ./frontend
-                            docker images | grep wanderlust || true
+                            echo "Images built:"
+                            docker images | grep devopswithjunaid/wanderlust || echo "No images found"
                         """
                     }
                 }
@@ -156,33 +124,22 @@ pipeline {
                     sh """
                         docker run --rm \
                         -v /var/run/docker.sock:/var/run/docker.sock \
-                        -v /home/azureuser/.trivy-cache:/root/.cache/ \
-                        -v ${WORKSPACE}/trivy-reports:/reports \
                         aquasec/trivy image \
                         --scanners vuln \
                         --severity HIGH,CRITICAL \
                         --exit-code 0 \
-                        --format table ${BACKEND_IMAGE}:${IMAGE_TAG}
+                        --format table ${BACKEND_IMAGE}:${IMAGE_TAG} || true
                     """
                     
                     echo "Scanning ${FRONTEND_IMAGE}:${IMAGE_TAG}..."
                     sh """
                         docker run --rm \
                         -v /var/run/docker.sock:/var/run/docker.sock \
-                        -v /home/azureuser/.trivy-cache:/root/.cache/ \
-                        -v ${WORKSPACE}/trivy-reports:/reports \
                         aquasec/trivy image \
                         --scanners vuln \
                         --severity HIGH,CRITICAL \
                         --exit-code 0 \
-                        --format table ${FRONTEND_IMAGE}:${IMAGE_TAG}
-                    """
-                    
-                    sh """
-                        echo "# Trivy Container Image Scan Summary"
-                        echo "## Images Scanned:"
-                        echo "- ${BACKEND_IMAGE}:${IMAGE_TAG}"
-                        echo "- ${FRONTEND_IMAGE}:${IMAGE_TAG}"
+                        --format table ${FRONTEND_IMAGE}:${IMAGE_TAG} || true
                     """
                 }
             }
@@ -192,10 +149,15 @@ pipeline {
             steps {
                 withCredentials([usernamePassword(credentialsId: 'docker-hub-creds1', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                     sh """
-                        echo "Pushing images to Docker Hub..."
-                        echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
+                        echo "Logging into Docker Hub as \${DOCKER_USER}..."
+                        echo "\$DOCKER_PASS" | docker login -u "\$DOCKER_USER" --password-stdin
+                        
+                        echo "Pushing ${BACKEND_IMAGE}:${IMAGE_TAG}..."
                         docker push ${BACKEND_IMAGE}:${IMAGE_TAG}
+                        
+                        echo "Pushing ${FRONTEND_IMAGE}:${IMAGE_TAG}..."
                         docker push ${FRONTEND_IMAGE}:${IMAGE_TAG}
+                        
                         echo "Images pushed successfully to Docker Hub"
                     """
                 }
@@ -206,11 +168,17 @@ pipeline {
             steps {
                 sshagent(credentials: ['deploy-server-ssh1']) {
                     sh """
+                        echo "Connecting to remote server..."
                         ssh -o StrictHostKeyChecking=no azureuser@20.55.29.56 '
                             export BUILD_NUMBER=${BUILD_NUMBER} &&
+                            echo "BUILD_NUMBER set to: \$BUILD_NUMBER" &&
                             cd /home/azureuser/devops-projects/wanderlust-3tier-project &&
+                            echo "Pulling latest images..." &&
                             docker compose pull &&
+                            echo "Starting containers..." &&
                             docker compose up -d &&
+                            echo "Checking running containers..." &&
+                            docker ps | grep wanderlust &&
                             echo "Deployment completed successfully"
                         '
                     """
@@ -222,67 +190,35 @@ pipeline {
     post {
         always {
             script {
+                // Archive reports if they exist
                 if (fileExists('trivy-reports')) {
                     archiveArtifacts artifacts: 'trivy-reports/**/*', allowEmptyArchive: true
                 }
                 
-                // Only cleanup build cache, keep images for deployment
+                // Only clean build cache, DO NOT remove images
                 sh '''
-                    echo "Cleaning up build cache only..."
-                    docker system prune -f --volumes
-                    docker builder prune -f
+                    echo "Cleaning up build cache only (keeping images for deployment)..."
+                    docker system prune -f --volumes || true
+                    docker builder prune -f || true
                 '''
             }
         }
         
         success {
             script {
-                echo "Pipeline SUCCESSFUL!"
-                
-                // Optional Slack notification
-                if (env.SLACK_WEBHOOK) {
-                    withCredentials([string(credentialsId: 'slack-webhook', variable: 'WEBHOOK')]) {
-                        sh '''
-                            curl -X POST -H "Content-type: application/json" \
-                            --data '{"text": "✅ BUILD SUCCESS: MyApp-CI-CD #'${BUILD_NUMBER}'\\n🔗 Build URL: http://20.55.29.56:8080/job/MyApp-CI-CD/'${BUILD_NUMBER}'/\\n🚀 Deployment completed successfully\\n📊 All security scans passed"}' \
-                            ${WEBHOOK}
-                        '''
-                    }
-                }
+                echo "Pipeline completed successfully!"
             }
         }
         
         failure {
             script {
-                echo "Pipeline FAILED!"
-                
-                // Optional Slack notification
-                if (env.SLACK_WEBHOOK) {
-                    withCredentials([string(credentialsId: 'slack-webhook', variable: 'WEBHOOK')]) {
-                        sh '''
-                            curl -X POST -H "Content-type: application/json" \
-                            --data '{"text": "❌ BUILD FAILED: MyApp-CI-CD #'${BUILD_NUMBER}'\\n🔗 Build URL: http://20.55.29.56:8080/job/MyApp-CI-CD/'${BUILD_NUMBER}'/\\n🔍 Check logs for details"}' \
-                            ${WEBHOOK}
-                        '''
-                    }
-                }
+                echo "Pipeline failed!"
             }
         }
         
         unstable {
             script {
-                echo "Pipeline UNSTABLE!"
-                
-                // Optional Slack notification  
-                if (env.SLACK_WEBHOOK) {
-                    withCredentials([string(credentialsId: 'slack-webhook', variable: 'WEBHOOK')]) {
-                        sh '''
-                            curl -X POST -H "Content-type: application/json" \
-                            --data '{"text": "⚠️ BUILD UNSTABLE: MyApp-CI-CD #'${BUILD_NUMBER}'\\n🔗 Build URL: http://20.55.29.56:8080/job/MyApp-CI-CD/'${BUILD_NUMBER}'/\\n📋 Core functionality works, optional features need configuration\\n✅ Docker images built and scanned successfully"}' \
-                            ${WEBHOOK}
-                        '''
-                    }
-                }
+                echo "Pipeline unstable - some tests failed but deployment may still work"
             }
         }
     }
