@@ -74,7 +74,7 @@ pipeline {
                 script {
                     sh "mkdir -p ${WORKSPACE}/trivy-reports"
                     
-                    echo "Scanning filesystem at ${WORKSPACE}/wanderlust-3tier-project/backend..."
+                    echo "Scanning filesystem..."
                     sh """
                         docker run --rm \
                         -v ${WORKSPACE}/wanderlust-3tier-project/backend:/target \
@@ -86,7 +86,6 @@ pipeline {
                         --format table /target || true
                     """
                     
-                    echo "Scanning filesystem at ${WORKSPACE}/wanderlust-3tier-project/frontend..."
                     sh """
                         docker run --rm \
                         -v ${WORKSPACE}/wanderlust-3tier-project/frontend:/target \
@@ -105,12 +104,12 @@ pipeline {
             steps {
                 script {
                     dir('wanderlust-3tier-project') {
-                        echo "Building Docker images with correct namespace..."
+                        echo "Building Docker images with correct namespace: devopswithjunaid"
                         sh """
                             docker build -t ${BACKEND_IMAGE}:${IMAGE_TAG} -f ./backend/Dockerfile_optimized ./backend
                             docker build -t ${FRONTEND_IMAGE}:${IMAGE_TAG} -f ./frontend/Dockerfile_optimized ./frontend
-                            echo "Images built:"
-                            docker images | grep devopswithjunaid/wanderlust || echo "No images found"
+                            echo "Images built successfully:"
+                            docker images | grep devopswithjunaid/wanderlust
                         """
                     }
                 }
@@ -164,11 +163,11 @@ pipeline {
             }
         }
 
-        stage('Remote Deploy on Host with Docker Compose') {
+        stage('Remote Deploy') {
             steps {
                 sshagent(credentials: ['deploy-server-ssh1']) {
                     sh """
-                        echo "Connecting to remote server..."
+                        echo "Deploying to remote server..."
                         ssh -o StrictHostKeyChecking=no azureuser@20.55.29.56 '
                             export BUILD_NUMBER=${BUILD_NUMBER} &&
                             echo "BUILD_NUMBER set to: \$BUILD_NUMBER" &&
@@ -190,36 +189,30 @@ pipeline {
     post {
         always {
             script {
-                // Archive reports if they exist
                 if (fileExists('trivy-reports')) {
                     archiveArtifacts artifacts: 'trivy-reports/**/*', allowEmptyArchive: true
                 }
                 
-                // Only clean build cache, DO NOT remove images
+                // DO NOT REMOVE IMAGES - Only clean build cache
                 sh '''
-                    echo "Cleaning up build cache only (keeping images for deployment)..."
+                    echo "Cleaning build cache only (keeping images for deployment)..."
                     docker system prune -f --volumes || true
                     docker builder prune -f || true
+                    echo "Images preserved for deployment"
                 '''
             }
         }
         
         success {
-            script {
-                echo "Pipeline completed successfully!"
-            }
+            echo "Pipeline completed successfully!"
         }
         
         failure {
-            script {
-                echo "Pipeline failed!"
-            }
+            echo "Pipeline failed!"
         }
         
         unstable {
-            script {
-                echo "Pipeline unstable - some tests failed but deployment may still work"
-            }
+            echo "Pipeline unstable - deployment may still work"
         }
     }
 }
