@@ -4,7 +4,6 @@ pipeline {
     tools {
         jdk 'jdk17'
         nodejs 'node16'
-        // SonarQube scanner tool configured in Jenkins Global Tool Config
     }
 
     environment {
@@ -68,9 +67,6 @@ pipeline {
             }
         }
 
-        // --- rest of your stages (Trivy, Docker Build, Push, Deploy) remain unchanged ---
-        // 👇👇
-        
         stage('Trivy Filesystem Scan') {
             steps {
                 script {
@@ -111,7 +107,6 @@ pipeline {
                             """
                         }
                         
-                        // Generate summary
                         sh """
                             echo "# Trivy Filesystem Scan Summary" > ${trivyDir}/fs-summary.md
                             echo "## Backend Source Vulnerabilities" >> ${trivyDir}/fs-summary.md
@@ -136,21 +131,17 @@ pipeline {
                         try {
                             echo "🐳 Building Docker images..."
                             
-                            // Build backend image
                             sh """
                                 docker build -t ${BACKEND_IMAGE}:${IMAGE_TAG} -f ./backend/Dockerfile_optimized ./backend
                                 echo "✅ Backend image built successfully"
                             """
                             
-                            // Build frontend image
                             sh """
                                 docker build -t ${FRONTEND_IMAGE}:${IMAGE_TAG} -f ./frontend/Dockerfile_optimized ./frontend
                                 echo "✅ Frontend image built successfully"
                             """
                             
-                            // List built images
                             sh "docker images | grep wanderlust"
-                            
                         } catch (Exception e) {
                             error "❌ Docker build failed: ${e.getMessage()}"
                         }
@@ -187,7 +178,6 @@ pipeline {
                             """
                         }
                         
-                        // Generate image scan summary
                         sh """
                             echo "# Trivy Container Image Scan Summary" >> ${trivyDir}/image-summary.md
                             echo "## Images Scanned:" >> ${trivyDir}/image-summary.md
@@ -206,20 +196,14 @@ pipeline {
         stage('Push to Docker Hub') {
             steps {
                 script {
-                    try {
-                        withCredentials([string(credentialsId: 'docker-hub-token', variable: 'DOCKER_TOKEN')]) {
-                            sh '''
-                                echo "🚢 Pushing images to Docker Hub..."
-                                echo "${DOCKER_TOKEN}" | docker login -u rjshk013 --password-stdin
-                                docker push ${BACKEND_IMAGE}:${IMAGE_TAG}
-                                docker push ${FRONTEND_IMAGE}:${IMAGE_TAG}
-                                echo "✅ Images pushed successfully"
-                            '''
-                        }
-                    } catch (Exception e) {
-                        echo "⚠️ Docker Hub push skipped - credential 'docker-hub-token' not found"
-                        echo "ℹ️ Configure Docker Hub credential to enable automatic image pushing"
-                        currentBuild.result = 'UNSTABLE'
+                    withCredentials([usernamePassword(credentialsId: 'docker-hub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                        sh '''
+                            echo "🚢 Pushing images to Docker Hub..."
+                            echo "${DOCKER_PASS}" | docker login -u "${DOCKER_USER}" --password-stdin
+                            docker push ${BACKEND_IMAGE}:${IMAGE_TAG}
+                            docker push ${FRONTEND_IMAGE}:${IMAGE_TAG}
+                            echo "✅ Images pushed successfully"
+                        '''
                     }
                 }
             }
@@ -242,13 +226,12 @@ pipeline {
                         }
                     } catch (Exception e) {
                         echo "⚠️ Deployment skipped - SSH credential 'deploy-server-ssh' not found or deployment target unreachable"
-                        echo "ℹ️ Configure SSH credential to enable automatic deployment"
                         currentBuild.result = 'UNSTABLE'
                     }
                 }
             }
         }
-    } 
+    }
 
     post {
         always {
@@ -264,7 +247,7 @@ pipeline {
                 '''
             }
         }
-        
+
         success {
             script {
                 withCredentials([string(credentialsId: 'SLACK_WEBHOOK_URL', variable: 'WEBHOOK')]) {
@@ -276,7 +259,7 @@ pipeline {
                 }
             }
         }
-        
+
         failure {
             script {
                 withCredentials([string(credentialsId: 'SLACK_WEBHOOK_URL', variable: 'WEBHOOK')]) {
@@ -288,7 +271,7 @@ pipeline {
                 }
             }
         }
-        
+
         unstable {
             script {
                 withCredentials([string(credentialsId: 'SLACK_WEBHOOK_URL', variable: 'WEBHOOK')]) {
