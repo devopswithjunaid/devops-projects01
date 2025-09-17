@@ -4,29 +4,47 @@ services:
   mongodb:
     container_name: mongo
     image: mongo:latest
+    restart: unless-stopped
     volumes:
-      - ./backend/data:/data
+      - ./data:/data/db
+      - mongodb_data:/data/db
     ports:
       - "27017:27017"
+    networks:
+      - wanderlust-network
 
   backend:
     container_name: backend
     image: devopswithjunaid/wanderlust-backend:${BUILD_NUMBER}
+    restart: unless-stopped
     environment:
-      - MONGODB_URI=mongodb://mongo/wanderlust
+      - MONGODB_URI=mongodb://mongo:27017/wanderlust
       - CORS_ORIGIN=http://localhost:8082
+      - NODE_ENV=production
     ports:
       - "8081:5000"
     depends_on:
       - mongodb
+    networks:
+      - wanderlust-network
 
   frontend:
     container_name: frontend
     image: devopswithjunaid/wanderlust-frontend:${BUILD_NUMBER}
+    restart: unless-stopped
     environment:
       - VITE_API_PATH=http://localhost:8081
     ports:
       - "8082:80"
+    depends_on:
+      - backend
+    networks:
+      - wanderlust-network
 
 volumes:
-  data:
+  mongodb_data:
+    driver: local
+
+networks:
+  wanderlust-network:
+    driver: bridge
