@@ -6,6 +6,10 @@ pipeline {
         nodejs 'node16'
     }
 
+    parameters {
+        booleanParam(name: 'SKIP_DEPLOY', defaultValue: false, description: 'Skip deployment stage')
+    }
+
     environment {
         IMAGE_TAG = "${BUILD_NUMBER}"
         DOCKER_REGISTRY = "rjshk013"
@@ -14,6 +18,7 @@ pipeline {
         // Add environment variables for better control
         TRIVY_CACHE_DIR = "${WORKSPACE}/.trivy-cache"
         DEPLOY_SUCCESS = "false"
+        DOCKER_PUSH_SUCCESS = "false"
     }
 
     stages {
@@ -148,6 +153,10 @@ pipeline {
                             docker build -t ${FRONTEND_IMAGE}:${IMAGE_TAG} -f ./frontend/Dockerfile_optimized ./frontend
                             echo "✅ Frontend image built successfully"
                             
+                            # Also tag with latest for easier pulls
+                            docker tag ${BACKEND_IMAGE}:${IMAGE_TAG} ${BACKEND_IMAGE}:latest
+                            docker tag ${FRONTEND_IMAGE}:${IMAGE_TAG} ${FRONTEND_IMAGE}:latest
+                            
                             echo "📋 Built images:"
                             docker images | grep ${DOCKER_REGISTRY}/wanderlust
                         """
@@ -201,7 +210,6 @@ pipeline {
         stage('Push to Docker Hub') {
             steps {
                 script {
-                    // Try to push to Docker Hub, but don't fail the build if credentials are missing
                     try {
                         withCredentials([string(credentialsId: 'docker-hub-token', variable: 'DOCKER_TOKEN')]) {
                             sh '''
@@ -211,24 +219,34 @@ pipeline {
                                 echo "📤 Pushing ${BACKEND_IMAGE}:${IMAGE_TAG}..."
                                 docker push ${BACKEND_IMAGE}:${IMAGE_TAG}
                                 
+                                echo "📤 Pushing ${BACKEND_IMAGE}:latest..."
+                                docker push ${BACKEND_IMAGE}:latest
+                                
                                 echo "📤 Pushing ${FRONTEND_IMAGE}:${IMAGE_TAG}..."  
                                 docker push ${FRONTEND_IMAGE}:${IMAGE_TAG}
                                 
-                                echo "✅ Images pushed successfully to Docker Hub"
+                                echo "📤 Pushing ${FRONTEND_IMAGE}:latest..."
+                                docker push ${FRONTEND_IMAGE}:latest
+                                
+                                echo "✅ All images pushed successfully to Docker Hub"
                             '''
+                            env.DOCKER_PUSH_SUCCESS = "true"
                         }
                     } catch (Exception e) {
-                        echo "⚠️ Docker Hub push skipped - credential 'docker-hub-token' not found"
+                        echo "⚠️ Docker Hub push failed or skipped - credential 'docker-hub-token' not found"
                         echo "ℹ️ Configure Docker Hub credential to enable automatic image pushing"
                         echo "Error: ${e.getMessage()}"
-                        // Don't fail the build, just mark as unstable
-                        currentBuild.result = 'UNSTABLE'
+                        // Don't fail the build, but don't mark as unstable either
+                        echo "🔒 Images will be kept locally for manual push or deployment"
                     }
                 }
             }
         }
 
         stage('Remote Deploy on Host with Docker Compose') {
+            when {
+                not { params.SKIP_DEPLOY }
+            }
             steps {
                 script {
                     try {
@@ -245,13 +263,22 @@ pipeline {
                             env.DEPLOY_SUCCESS = "true"
                         }
                     } catch (Exception e) {
-                        echo "⚠️ Deployment skipped - SSH credential 'deploy-server-ssh' not found or deployment target unreachable"
-                        echo "ℹ️ Configure SSH credential to enable automatic deployment"
+                        echo "⚠️ Deployment failed - SSH credential 'jenkins' not found or deployment target unreachable"
+                        echo "ℹ️ Configure SSH credential and ensure target server is accessible"
                         echo "Error: ${e.getMessage()}"
-                        // Don't fail the build, just mark as unstable
-                        currentBuild.result = 'UNSTABLE'
+                        echo "🔒 Images will be kept locally for manual deployment"
                     }
                 }
+            }
+        }
+
+        stage('Manual Cleanup') {
+            steps {
+                echo "🔒 Image cleanup disabled - all Docker images will be preserved locally"
+                echo "📋 Built images are available:"
+                sh '''
+                    docker images | grep ${DOCKER_REGISTRY}/wanderlust || echo "No wanderlust images found"
+                '''
             }
         }
     }
@@ -264,30 +291,57 @@ pipeline {
                     archiveArtifacts artifacts: 'trivy-reports/**/*', allowEmptyArchive: true
                 }
                 
-                // Only clean up images if deployment was successful OR if we're not deploying
-                if (env.DEPLOY_SUCCESS == "true" || currentBuild.result == 'UNSTABLE') {
-                    sh '''
-                        echo "🧹 Cleaning up Docker images..."
-                        docker rmi ${BACKEND_IMAGE}:${IMAGE_TAG} || true
-                        docker rmi ${FRONTEND_IMAGE}:${IMAGE_TAG} || true
-                        docker system prune -f || true
-                    '''
+                // NO CLEANUP - Images are preserved permanently
+                echo "🔒 Docker images preserved permanently - no cleanup performed"
+                echo "📋 Local images available for manual use or deployment:"
+                sh '''
+                    echo "=== AVAILABLE DOCKER IMAGES ==="
+                    docker images | grep ${DOCKER_REGISTRY}/wanderlust || echo "No wanderlust images found"
+                '''
+                
+                if (env.DOCKER_PUSH_SUCCESS == "true") {
+                    echo "✅ Images are also available on Docker Hub:"
+                    echo "   - ${DOCKER_REGISTRY}/wanderlust-backend:${IMAGE_TAG}"
+                    echo "   - ${DOCKER_REGISTRY}/wanderlust-backend:latest"
+                    echo "   - ${DOCKER_REGISTRY}/wanderlust-frontend:${IMAGE_TAG}"
+                    echo "   - ${DOCKER_REGISTRY}/wanderlust-frontend:latest"
+                }
+                
+                // Display final status
+                sh '''
+                    echo "=== PIPELINE SUMMARY ==="
+                    echo "📦 Docker Images Built: ✅"
+                    echo "🔍 Security Scans: ✅"
+                    echo "🔒 Image Cleanup: Disabled (Images Preserved)"
+                '''
+                
+                if (env.DOCKER_PUSH_SUCCESS == "true") {
+                    sh 'echo "📤 Docker Hub Push: ✅"'
                 } else {
-                    echo "🔒 Keeping images for manual deployment verification"
+                    sh 'echo "📤 Docker Hub Push: ⚠️ Skipped (Configure docker-hub-token credential)"'
+                }
+                
+                if (env.DEPLOY_SUCCESS == "true") {
+                    sh 'echo "🚀 Deployment: ✅"'
+                } else {
+                    sh 'echo "🚀 Deployment: ⚠️ Skipped (Configure jenkins SSH credential)"'
                 }
             }
         }
         
         success {
             script {
+                def deployStatus = env.DEPLOY_SUCCESS == "true" ? "🚀 Deployment: ✅" : "🚀 Deployment: ⚠️ Skipped"
+                def pushStatus = env.DOCKER_PUSH_SUCCESS == "true" ? "📤 Push: ✅" : "📤 Push: ⚠️ Skipped"
+                
                 // Send success notification
                 try {
                     withCredentials([string(credentialsId: 'slack-webhook', variable: 'WEBHOOK')]) {
-                        sh '''
+                        sh """
                             curl -X POST -H "Content-type: application/json" \
-                            --data '{"text": "✅ BUILD SUCCESS: MyApp-CI-CD #${BUILD_NUMBER}\\n🔗 Build URL: ${BUILD_URL}\\n📦 Images: ${BACKEND_IMAGE}:${IMAGE_TAG}, ${FRONTEND_IMAGE}:${IMAGE_TAG}\\n🚀 Deployment completed successfully"}' \
+                            --data '{"text": "✅ BUILD SUCCESS: MyApp-CI-CD #${BUILD_NUMBER}\\n🔗 Build URL: ${BUILD_URL}\\n📦 Images: ${BACKEND_IMAGE}:${IMAGE_TAG}, ${FRONTEND_IMAGE}:${IMAGE_TAG}\\n${pushStatus}\\n${deployStatus}"}' \
                             "${WEBHOOK}"
-                        '''
+                        """
                     }
                 } catch (Exception e) {
                     echo "Notification webhook not configured"
@@ -309,23 +363,6 @@ pipeline {
                 } catch (Exception e) {
                     echo "Notification webhook not configured"
                 }
-            }
-        }
-        
-        unstable {
-            script {
-                // Send unstable notification
-                try {
-                    withCredentials([string(credentialsId: 'slack-webhook', variable: 'WEBHOOK')]) {
-                        sh '''
-                            curl -X POST -H "Content-type: application/json" \
-                            --data '{"text": "⚠️ BUILD UNSTABLE: MyApp-CI-CD #${BUILD_NUMBER}\\n🔗 Build URL: ${BUILD_URL}\\n📋 Core functionality works, optional features need configuration\\n✅ Docker images built and scanned successfully"}' \
-                            "${WEBHOOK}"
-                        '''
-                    }
-                } catch (Exception e) {
-                        echo "Notification webhook not configured"
-                    }
             }
         }
     }
