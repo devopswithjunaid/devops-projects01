@@ -1,4 +1,5 @@
 version: "3.8"
+
 services:
   mongodb:
     container_name: mongo
@@ -13,7 +14,7 @@ services:
     image: devopswithjunaid/wanderlust-backend:${BUILD_NUMBER}
     environment:
       - MONGODB_URI=mongodb://mongo/wanderlust
-      - CORS_ORIGIN=http://<REMOTE_SERVER_IP>:8082
+      - CORS_ORIGIN=http://localhost:8082
     ports:
       - "8081:5000"
     depends_on:
@@ -23,11 +24,9 @@ services:
     container_name: frontend
     image: devopswithjunaid/wanderlust-frontend:${BUILD_NUMBER}
     environment:
-      - VITE_API_PATH=http://<REMOTE_SERVER_IP>:8081
+      - VITE_API_PATH=http://localhost:8081
     ports:
-      - "8082:5173"
-    depends_on:
-      - backend
+      - "8082:80"
 
 volumes:
   data:
