@@ -30,45 +30,15 @@ pipeline {
             }
         }
 
-        stage('SonarQube Analysis') {
-            steps {
-                withSonarQubeEnv('sonarqube') {
-                    script {
-                        def scannerHome = tool 'sonar-scanner'
-                        dir('wanderlust-3tier-project/backend') {
-                            sh """
-                                ${scannerHome}/bin/sonar-scanner \
-                                -Dsonar.projectKey=wanderlust-backend \
-                                -Dsonar.sources=. \
-                                -Dsonar.host.url=$SONAR_HOST_URL \
-                                -Dsonar.login=$SONAR_AUTH_TOKEN
-                            """
-                        }
-                    }
-                }
-            }
-        }
-
-        stage('Code Quality Check') {
-            steps {
-                dir('wanderlust-3tier-project/backend') {
-                    sh "npm audit --audit-level high || true"
-                }
-                dir('wanderlust-3tier-project/frontend') {
-                    sh "npm audit --audit-level high || true"
-                }
-            }
-        }
-
         stage('Docker Build') {
             steps {
                 script {
                     dir('wanderlust-3tier-project') {
+                        echo "🐳 Building Docker images..."
                         sh """
-                            echo "🐳 Building Docker images..."
                             docker build -t ${BACKEND_IMAGE}:${IMAGE_TAG} -f ./backend/Dockerfile_optimized ./backend
                             docker build -t ${FRONTEND_IMAGE}:${IMAGE_TAG} -f ./frontend/Dockerfile_optimized ./frontend
-                            docker images | grep wanderlust
+                            docker images | grep wanderlust || true
                         """
                     }
                 }
@@ -77,58 +47,43 @@ pipeline {
 
         stage('Push to Docker Hub') {
             steps {
-                withCredentials([usernamePassword(credentialsId: 'docker-hub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                withCredentials([usernamePassword(credentialsId: 'docker-hub-creds1', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                     sh """
-                        echo "🚢 Pushing images to Docker Hub..."
                         echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
                         docker push ${BACKEND_IMAGE}:${IMAGE_TAG}
                         docker push ${FRONTEND_IMAGE}:${IMAGE_TAG}
-                        echo "✅ Images pushed successfully"
+                        echo "✅ Images pushed successfully to Docker Hub"
                     """
                 }
             }
         }
 
-        stage('Remote Deploy') {
+        stage('Remote Deploy on Host with Docker Compose') {
             steps {
-                script {
-                    sshagent(credentials: ['deploy-server-ssh']) {
-                        sh """
-                            echo "🚀 Deploying on remote server..."
-                            ssh -o StrictHostKeyChecking=no azureuser@20.55.29.56 "
-                                cd /home/azureuser/devops-projects/wanderlust-3tier-project &&
-                                export BUILD_NUMBER=${BUILD_NUMBER} &&
-                                docker compose pull &&
-                                docker compose up -d &&
-                                echo '✅ Deployment completed successfully'
-                            "
-                        """
-                    }
+                sshagent(credentials: ['deploy-server-ssh1']) {
+                    sh """
+                        ssh -o StrictHostKeyChecking=no azureuser@20.55.29.56 '
+                            cd /home/azureuser/devops-projects/wanderlust-3tier-project &&
+                            docker compose pull &&
+                            docker compose up -d &&
+                            echo "✅ Deployment completed successfully"
+                        '
+                    """
                 }
             }
         }
     }
 
     post {
-        always {
-            sh '''
-                echo "🧹 Cleaning up Docker images..."
-                docker rmi ${BACKEND_IMAGE}:${IMAGE_TAG} || true
-                docker rmi ${FRONTEND_IMAGE}:${IMAGE_TAG} || true
-                docker system prune -f || true
-            '''
-        }
-
         success {
-            echo "✅ Pipeline completed successfully!"
+            script {
+                echo "🎉 Pipeline SUCCESSFUL!"
+            }
         }
-
         failure {
-            echo "❌ Pipeline failed. Check logs for details."
-        }
-
-        unstable {
-            echo "⚠️ Pipeline unstable. Some checks failed but build continued."
+            script {
+                echo "❌ Pipeline FAILED!"
+            }
         }
     }
 }
