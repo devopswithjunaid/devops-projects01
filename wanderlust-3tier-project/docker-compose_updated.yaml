@@ -10,27 +10,24 @@ services:
 
   backend:
     container_name: backend
-    build: ./backend
+    image: devopswithjunaid/wanderlust-backend:${BUILD_NUMBER}
     environment:
       - MONGODB_URI=mongodb://mongo/wanderlust
-      - CORS_ORIGIN=http://143.110.252.30:5173
-    # env_file:
-    #   - ./backend/.env.sample
+      - CORS_ORIGIN=http://<REMOTE_SERVER_IP>:8082
     ports:
-      - "5000:5000"
+      - "8081:5000"
     depends_on:
       - mongodb
 
   frontend:
     container_name: frontend
-    build: ./frontend
-    # image: rjshk013/wanderlust-frontend:latest 
+    image: devopswithjunaid/wanderlust-frontend:${BUILD_NUMBER}
     environment:
-      - VITE_API_PATH=http://143.110.252.30:5000
-    # env_file:
-    #   - ./frontend/.env.sample
+      - VITE_API_PATH=http://<REMOTE_SERVER_IP>:8081
     ports:
-      - "5173:5173"
-      
+      - "8082:5173"
+    depends_on:
+      - backend
+
 volumes:
   data:
