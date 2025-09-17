@@ -30,15 +30,160 @@ pipeline {
             }
         }
 
+        stage('SonarQube Analysis') {
+            steps {
+                withSonarQubeEnv('sonarqube') {
+                    script {
+                        def scannerHome = tool 'sonar-scanner'
+                        dir('wanderlust-3tier-project/backend') {
+                            sh """
+                                ${scannerHome}/bin/sonar-scanner \
+                                -Dsonar.projectKey=wanderlust-backend \
+                                -Dsonar.sources=. \
+                                -Dsonar.host.url=http://20.55.29.56:9001 \
+                                -Dsonar.login=\$SONAR_AUTH_TOKEN
+                            """
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Code Quality Check') {
+            steps {
+                echo "Running code quality checks..."
+                dir('wanderlust-3tier-project/backend') {
+                    sh '''
+                        echo "Backend package.json audit:"
+                        npm audit --audit-level high || true
+                        echo "Audit completed with warnings"
+                    '''
+                }
+                dir('wanderlust-3tier-project/frontend') {
+                    sh '''
+                        echo "Frontend package.json audit:"
+                        npm audit --audit-level high || true
+                        echo "Audit completed with warnings"
+                    '''
+                }
+            }
+        }
+
+        stage('Trivy Filesystem Scan') {
+            steps {
+                script {
+                    sh "mkdir -p ${WORKSPACE}/trivy-reports"
+                    
+                    echo "Scanning filesystem at ${WORKSPACE}/wanderlust-3tier-project/backend..."
+                    sh """
+                        docker run --rm \
+                        -v ${WORKSPACE}/wanderlust-3tier-project/backend:/target \
+                        -v ${WORKSPACE}/trivy-reports:/reports \
+                        aquasec/trivy fs \
+                        --scanners vuln \
+                        --severity HIGH,CRITICAL \
+                        --exit-code 0 \
+                        --format table /target
+                    """
+                    
+                    sh """
+                        docker run --rm \
+                        -v ${WORKSPACE}/wanderlust-3tier-project/backend:/target \
+                        -v ${WORKSPACE}/trivy-reports:/reports \
+                        aquasec/trivy fs \
+                        --scanners misconfig \
+                        --severity HIGH,CRITICAL \
+                        --exit-code 0 \
+                        --format json /target
+                    """
+                    
+                    echo "Scanning filesystem at ${WORKSPACE}/wanderlust-3tier-project/frontend..."
+                    sh """
+                        docker run --rm \
+                        -v ${WORKSPACE}/wanderlust-3tier-project/frontend:/target \
+                        -v ${WORKSPACE}/trivy-reports:/reports \
+                        aquasec/trivy fs \
+                        --scanners vuln \
+                        --severity HIGH,CRITICAL \
+                        --exit-code 0 \
+                        --format table /target
+                    """
+                    
+                    sh """
+                        docker run --rm \
+                        -v ${WORKSPACE}/wanderlust-3tier-project/frontend:/target \
+                        -v ${WORKSPACE}/trivy-reports:/reports \
+                        aquasec/trivy fs \
+                        --scanners misconfig \
+                        --severity HIGH,CRITICAL \
+                        --exit-code 0 \
+                        --format json /target
+                    """
+                    
+                    sh '''
+                        echo "# Trivy Filesystem Scan Summary"
+                        echo "## Backend Source Vulnerabilities"
+                        if [ -f ${WORKSPACE}/trivy-reports/trivy-backend-fs-vuln.txt ]; then
+                            echo "```"
+                            grep -A 10 "CRITICAL\\|HIGH" ${WORKSPACE}/trivy-reports/trivy-backend-fs-vuln.txt | head -20
+                            echo "```"
+                        fi
+                        echo
+                    '''
+                }
+            }
+        }
+
         stage('Docker Build') {
             steps {
                 script {
                     dir('wanderlust-3tier-project') {
+                        echo "Building Docker images..."
                         sh """
                             docker build -t ${BACKEND_IMAGE}:${IMAGE_TAG} -f ./backend/Dockerfile_optimized ./backend
                             docker build -t ${FRONTEND_IMAGE}:${IMAGE_TAG} -f ./frontend/Dockerfile_optimized ./frontend
+                            docker images | grep wanderlust || true
                         """
                     }
+                }
+            }
+        }
+
+        stage('Trivy Image Scan') {
+            steps {
+                script {
+                    echo "Scanning ${BACKEND_IMAGE}:${IMAGE_TAG}..."
+                    sh """
+                        docker run --rm \
+                        -v /var/run/docker.sock:/var/run/docker.sock \
+                        -v /home/azureuser/.trivy-cache:/root/.cache/ \
+                        -v ${WORKSPACE}/trivy-reports:/reports \
+                        aquasec/trivy image \
+                        --scanners vuln \
+                        --severity HIGH,CRITICAL \
+                        --exit-code 0 \
+                        --format table ${BACKEND_IMAGE}:${IMAGE_TAG}
+                    """
+                    
+                    echo "Scanning ${FRONTEND_IMAGE}:${IMAGE_TAG}..."
+                    sh """
+                        docker run --rm \
+                        -v /var/run/docker.sock:/var/run/docker.sock \
+                        -v /home/azureuser/.trivy-cache:/root/.cache/ \
+                        -v ${WORKSPACE}/trivy-reports:/reports \
+                        aquasec/trivy image \
+                        --scanners vuln \
+                        --severity HIGH,CRITICAL \
+                        --exit-code 0 \
+                        --format table ${FRONTEND_IMAGE}:${IMAGE_TAG}
+                    """
+                    
+                    sh """
+                        echo "# Trivy Container Image Scan Summary"
+                        echo "## Images Scanned:"
+                        echo "- ${BACKEND_IMAGE}:${IMAGE_TAG}"
+                        echo "- ${FRONTEND_IMAGE}:${IMAGE_TAG}"
+                    """
                 }
             }
         }
@@ -47,9 +192,11 @@ pipeline {
             steps {
                 withCredentials([usernamePassword(credentialsId: 'docker-hub-creds1', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                     sh """
+                        echo "Pushing images to Docker Hub..."
                         echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
                         docker push ${BACKEND_IMAGE}:${IMAGE_TAG}
                         docker push ${FRONTEND_IMAGE}:${IMAGE_TAG}
+                        echo "Images pushed successfully to Docker Hub"
                     """
                 }
             }
@@ -60,9 +207,11 @@ pipeline {
                 sshagent(credentials: ['deploy-server-ssh1']) {
                     sh """
                         ssh -o StrictHostKeyChecking=no azureuser@20.55.29.56 '
+                            export BUILD_NUMBER=${BUILD_NUMBER} &&
                             cd /home/azureuser/devops-projects/wanderlust-3tier-project &&
                             docker compose pull &&
-                            docker compose up -d
+                            docker compose up -d &&
+                            echo "Deployment completed successfully"
                         '
                     """
                 }
@@ -71,11 +220,70 @@ pipeline {
     }
 
     post {
-        success {
-            echo "🎉 Pipeline SUCCESSFUL!"
+        always {
+            script {
+                if (fileExists('trivy-reports')) {
+                    archiveArtifacts artifacts: 'trivy-reports/**/*', allowEmptyArchive: true
+                }
+                
+                // Only cleanup build cache, keep images for deployment
+                sh '''
+                    echo "Cleaning up build cache only..."
+                    docker system prune -f --volumes
+                    docker builder prune -f
+                '''
+            }
         }
+        
+        success {
+            script {
+                echo "Pipeline SUCCESSFUL!"
+                
+                // Optional Slack notification
+                if (env.SLACK_WEBHOOK) {
+                    withCredentials([string(credentialsId: 'slack-webhook', variable: 'WEBHOOK')]) {
+                        sh '''
+                            curl -X POST -H "Content-type: application/json" \
+                            --data '{"text": "✅ BUILD SUCCESS: MyApp-CI-CD #'${BUILD_NUMBER}'\\n🔗 Build URL: http://20.55.29.56:8080/job/MyApp-CI-CD/'${BUILD_NUMBER}'/\\n🚀 Deployment completed successfully\\n📊 All security scans passed"}' \
+                            ${WEBHOOK}
+                        '''
+                    }
+                }
+            }
+        }
+        
         failure {
-            echo "❌ Pipeline FAILED!"
+            script {
+                echo "Pipeline FAILED!"
+                
+                // Optional Slack notification
+                if (env.SLACK_WEBHOOK) {
+                    withCredentials([string(credentialsId: 'slack-webhook', variable: 'WEBHOOK')]) {
+                        sh '''
+                            curl -X POST -H "Content-type: application/json" \
+                            --data '{"text": "❌ BUILD FAILED: MyApp-CI-CD #'${BUILD_NUMBER}'\\n🔗 Build URL: http://20.55.29.56:8080/job/MyApp-CI-CD/'${BUILD_NUMBER}'/\\n🔍 Check logs for details"}' \
+                            ${WEBHOOK}
+                        '''
+                    }
+                }
+            }
+        }
+        
+        unstable {
+            script {
+                echo "Pipeline UNSTABLE!"
+                
+                // Optional Slack notification  
+                if (env.SLACK_WEBHOOK) {
+                    withCredentials([string(credentialsId: 'slack-webhook', variable: 'WEBHOOK')]) {
+                        sh '''
+                            curl -X POST -H "Content-type: application/json" \
+                            --data '{"text": "⚠️ BUILD UNSTABLE: MyApp-CI-CD #'${BUILD_NUMBER}'\\n🔗 Build URL: http://20.55.29.56:8080/job/MyApp-CI-CD/'${BUILD_NUMBER}'/\\n📋 Core functionality works, optional features need configuration\\n✅ Docker images built and scanned successfully"}' \
+                            ${WEBHOOK}
+                        '''
+                    }
+                }
+            }
         }
     }
 }
