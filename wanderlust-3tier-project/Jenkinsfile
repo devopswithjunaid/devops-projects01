@@ -8,8 +8,8 @@ pipeline {
 
     environment {
         IMAGE_TAG = "${BUILD_NUMBER}"
-        BACKEND_IMAGE = "rjshk013/wanderlust-backend"
-        FRONTEND_IMAGE = "rjshk013/wanderlust-frontend"
+        BACKEND_IMAGE = "devopswithjunaid/wanderlust-backend"
+        FRONTEND_IMAGE = "devopswithjunaid/wanderlust-frontend"
     }
 
     stages {
@@ -51,75 +51,11 @@ pipeline {
 
         stage('Code Quality Check') {
             steps {
-                echo "📊 Running code quality checks..."
                 dir('wanderlust-3tier-project/backend') {
-                    sh """
-                        echo "Backend package.json audit:"
-                        npm audit --audit-level high || echo "Audit completed with warnings"
-                    """
+                    sh "npm audit --audit-level high || true"
                 }
                 dir('wanderlust-3tier-project/frontend') {
-                    sh """
-                        echo "Frontend package.json audit:"
-                        npm audit --audit-level high || echo "Audit completed with warnings"
-                    """
-                }
-            }
-        }
-
-        stage('Trivy Filesystem Scan') {
-            steps {
-                script {
-                    try {
-                        def trivyDir = "${WORKSPACE}/trivy-reports"
-                        sh "mkdir -p ${trivyDir}"
-                        
-                        def fsTargets = [
-                            [path: "${WORKSPACE}/wanderlust-3tier-project/backend", name: "backend-fs"],
-                            [path: "${WORKSPACE}/wanderlust-3tier-project/frontend", name: "frontend-fs"]
-                        ]
-                        
-                        for (target in fsTargets) {
-                            echo "🔍 Scanning filesystem at ${target.path}..."
-                            
-                            sh """
-                                docker run --rm \
-                                    -v ${target.path}:/target \
-                                    -v ${trivyDir}:/reports \
-                                    aquasec/trivy fs \
-                                    --scanners vuln \
-                                    --severity HIGH,CRITICAL \
-                                    --exit-code 0 \
-                                    --format table \
-                                    /target > ${trivyDir}/trivy-${target.name}-vuln.txt || echo "Scan completed"
-                            """
-                            
-                            sh """
-                                docker run --rm \
-                                    -v ${target.path}:/target \
-                                    -v ${trivyDir}:/reports \
-                                    aquasec/trivy fs \
-                                    --scanners misconfig \
-                                    --severity HIGH,CRITICAL \
-                                    --exit-code 0 \
-                                    --format json \
-                                    /target > ${trivyDir}/trivy-${target.name}-config.json || echo "Config scan completed"
-                            """
-                        }
-                        
-                        sh """
-                            echo "# Trivy Filesystem Scan Summary" > ${trivyDir}/fs-summary.md
-                            echo "## Backend Source Vulnerabilities" >> ${trivyDir}/fs-summary.md
-                            if [ -f ${trivyDir}/trivy-backend-fs-vuln.txt ]; then
-                                echo '```' >> ${trivyDir}/fs-summary.md
-                                grep -A 10 "CRITICAL\\|HIGH" ${trivyDir}/trivy-backend-fs-vuln.txt | head -20 >> ${trivyDir}/fs-summary.md || echo "No critical/high vulnerabilities found" >> ${trivyDir}/fs-summary.md
-                                echo '```' >> ${trivyDir}/fs-summary.md
-                            fi
-                        """
-                    } catch (Exception e) {
-                        echo "⚠️ Trivy filesystem scan encountered issues: ${e.getMessage()}"
-                        currentBuild.result = 'UNSTABLE'
-                    }
+                    sh "npm audit --audit-level high || true"
                 }
             }
         }
@@ -128,66 +64,11 @@ pipeline {
             steps {
                 script {
                     dir('wanderlust-3tier-project') {
-                        try {
-                            echo "🐳 Building Docker images..."
-                            
-                            sh """
-                                docker build -t ${BACKEND_IMAGE}:${IMAGE_TAG} -f ./backend/Dockerfile_optimized ./backend
-                                echo "✅ Backend image built successfully"
-                            """
-                            
-                            sh """
-                                docker build -t ${FRONTEND_IMAGE}:${IMAGE_TAG} -f ./frontend/Dockerfile_optimized ./frontend
-                                echo "✅ Frontend image built successfully"
-                            """
-                            
-                            sh "docker images | grep wanderlust"
-                        } catch (Exception e) {
-                            error "❌ Docker build failed: ${e.getMessage()}"
-                        }
-                    }
-                }
-            }
-        }
-
-        stage('Trivy Image Scan') {
-            steps {
-                script {
-                    try {
-                        def trivyDir = "${WORKSPACE}/trivy-reports"
-                        
-                        def images = [
-                            [name: "${BACKEND_IMAGE}:${IMAGE_TAG}", type: "backend"],
-                            [name: "${FRONTEND_IMAGE}:${IMAGE_TAG}", type: "frontend"]
-                        ]
-
-                        for (img in images) {
-                            echo "🔍 Scanning ${img.name}..."
-                            
-                            sh """
-                                docker run --rm \
-                                    -v /var/run/docker.sock:/var/run/docker.sock \
-                                    -v \$HOME/.trivy-cache:/root/.cache/ \
-                                    -v ${trivyDir}:/reports \
-                                    aquasec/trivy image \
-                                    --scanners vuln \
-                                    --severity HIGH,CRITICAL \
-                                    --exit-code 0 \
-                                    --format table \
-                                    ${img.name} > ${trivyDir}/trivy-${img.type}-report.txt || echo "Image scan completed"
-                            """
-                        }
-                        
                         sh """
-                            echo "# Trivy Container Image Scan Summary" >> ${trivyDir}/image-summary.md
-                            echo "## Images Scanned:" >> ${trivyDir}/image-summary.md
-                            echo "- ${BACKEND_IMAGE}:${IMAGE_TAG}" >> ${trivyDir}/image-summary.md
-                            echo "- ${FRONTEND_IMAGE}:${IMAGE_TAG}" >> ${trivyDir}/image-summary.md
+                            docker build -t ${BACKEND_IMAGE}:${IMAGE_TAG} -f ./backend/Dockerfile_optimized ./backend
+                            docker build -t ${FRONTEND_IMAGE}:${IMAGE_TAG} -f ./frontend/Dockerfile_optimized ./frontend
                         """
-                        
-                    } catch (Exception e) {
-                        echo "⚠️ Trivy image scan encountered issues: ${e.getMessage()}"
-                        currentBuild.result = 'UNSTABLE'
+                        sh "docker images | grep wanderlust"
                     }
                 }
             }
@@ -195,38 +76,29 @@ pipeline {
 
         stage('Push to Docker Hub') {
             steps {
-                script {
-                    withCredentials([usernamePassword(credentialsId: 'docker-hub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
-                        sh '''
-                            echo "🚢 Pushing images to Docker Hub..."
-                            echo "${DOCKER_PASS}" | docker login -u "${DOCKER_USER}" --password-stdin
-                            docker push ${BACKEND_IMAGE}:${IMAGE_TAG}
-                            docker push ${FRONTEND_IMAGE}:${IMAGE_TAG}
-                            echo "✅ Images pushed successfully"
-                        '''
-                    }
+                withCredentials([usernamePassword(credentialsId: 'docker-hub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                    sh '''
+                        echo "${DOCKER_PASS}" | docker login -u "${DOCKER_USER}" --password-stdin
+                        docker push ${BACKEND_IMAGE}:${IMAGE_TAG}
+                        docker push ${FRONTEND_IMAGE}:${IMAGE_TAG}
+                    '''
                 }
             }
         }
 
-        stage('Remote Deploy on Host with Docker Compose') {
+        stage('Remote Deploy') {
             steps {
                 script {
-                    try {
-                        sshagent(credentials: ['deploy-server-ssh']) {
-                            sh '''
-                                echo "🚀 Deploying on host with docker compose..."
-                                ssh -o StrictHostKeyChecking=no user@172.18.0.1 "
-                                    cd /home/user/devops-projects/wanderlust-3tier-project &&
-                                    docker compose pull &&
-                                    docker compose up -d &&
-                                    echo '✅ Deployment completed successfully'
-                                "
-                            '''
-                        }
-                    } catch (Exception e) {
-                        echo "⚠️ Deployment skipped - SSH credential 'deploy-server-ssh' not found or deployment target unreachable"
-                        currentBuild.result = 'UNSTABLE'
+                    sshagent(credentials: ['deploy-server-ssh']) {
+                        sh '''
+                            ssh -o StrictHostKeyChecking=no azureuser@20.55.29.56 "
+                                cd /home/azureuser/devops-projects/wanderlust-3tier-project &&
+                                export BUILD_NUMBER=${BUILD_NUMBER} &&
+                                docker compose pull &&
+                                docker compose up -d &&
+                                echo '✅ Deployment successful'
+                            "
+                        '''
                     }
                 }
             }
@@ -235,53 +107,11 @@ pipeline {
 
     post {
         always {
-            script {
-                if (fileExists('trivy-reports/')) {
-                    archiveArtifacts artifacts: 'trivy-reports/**', fingerprint: true, allowEmptyArchive: true
-                }
-                sh '''
-                    echo "🧹 Cleaning up Docker images..."
-                    docker rmi ${BACKEND_IMAGE}:${IMAGE_TAG} || true
-                    docker rmi ${FRONTEND_IMAGE}:${IMAGE_TAG} || true
-                    docker system prune -f || true
-                '''
-            }
-        }
-
-        success {
-            script {
-                withCredentials([string(credentialsId: 'SLACK_WEBHOOK_URL', variable: 'WEBHOOK')]) {
-                    sh """
-                    curl -X POST -H 'Content-type: application/json' \
-                    --data '{"text": "✅ BUILD SUCCESSFUL: ${env.JOB_NAME} #${env.BUILD_NUMBER}\\n🔗 Build URL: ${env.BUILD_URL}\\n📦 Images: ${env.BACKEND_IMAGE}:${env.IMAGE_TAG}, ${env.FRONTEND_IMAGE}:${env.IMAGE_TAG}\\n🚀 CI/CD pipeline completed!"}' \
-                    \$WEBHOOK
-                    """
-                }
-            }
-        }
-
-        failure {
-            script {
-                withCredentials([string(credentialsId: 'SLACK_WEBHOOK_URL', variable: 'WEBHOOK')]) {
-                    sh """
-                    curl -X POST -H 'Content-type: application/json' \
-                    --data '{"text": "❌ BUILD FAILED: ${env.JOB_NAME} #${env.BUILD_NUMBER}\\n🔗 Build URL: ${env.BUILD_URL}\\n📋 Check logs for details\\n⚠️ Pipeline failed at one of the stages"}' \
-                    \$WEBHOOK
-                    """
-                }
-            }
-        }
-
-        unstable {
-            script {
-                withCredentials([string(credentialsId: 'SLACK_WEBHOOK_URL', variable: 'WEBHOOK')]) {
-                    sh """
-                    curl -X POST -H 'Content-type: application/json' \
-                    --data '{"text": "⚠️ BUILD UNSTABLE: ${env.JOB_NAME} #${env.BUILD_NUMBER}\\n🔗 Build URL: ${env.BUILD_URL}\\n📋 Core functionality works, optional features need configuration\\n✅ Docker images built and scanned successfully"}' \
-                    \$WEBHOOK
-                    """
-                }
-            }
+            sh '''
+                docker rmi ${BACKEND_IMAGE}:${IMAGE_TAG} || true
+                docker rmi ${FRONTEND_IMAGE}:${IMAGE_TAG} || true
+                docker system prune -f || true
+            '''
         }
     }
 }
