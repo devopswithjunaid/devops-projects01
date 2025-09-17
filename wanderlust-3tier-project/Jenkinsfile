@@ -34,11 +34,9 @@ pipeline {
             steps {
                 script {
                     dir('wanderlust-3tier-project') {
-                        echo "🐳 Building Docker images..."
                         sh """
                             docker build -t ${BACKEND_IMAGE}:${IMAGE_TAG} -f ./backend/Dockerfile_optimized ./backend
                             docker build -t ${FRONTEND_IMAGE}:${IMAGE_TAG} -f ./frontend/Dockerfile_optimized ./frontend
-                            docker images | grep wanderlust || true
                         """
                     }
                 }
@@ -52,7 +50,6 @@ pipeline {
                         echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
                         docker push ${BACKEND_IMAGE}:${IMAGE_TAG}
                         docker push ${FRONTEND_IMAGE}:${IMAGE_TAG}
-                        echo "✅ Images pushed successfully to Docker Hub"
                     """
                 }
             }
@@ -65,8 +62,7 @@ pipeline {
                         ssh -o StrictHostKeyChecking=no azureuser@20.55.29.56 '
                             cd /home/azureuser/devops-projects/wanderlust-3tier-project &&
                             docker compose pull &&
-                            docker compose up -d &&
-                            echo "✅ Deployment completed successfully"
+                            docker compose up -d
                         '
                     """
                 }
@@ -76,14 +72,10 @@ pipeline {
 
     post {
         success {
-            script {
-                echo "🎉 Pipeline SUCCESSFUL!"
-            }
+            echo "🎉 Pipeline SUCCESSFUL!"
         }
         failure {
-            script {
-                echo "❌ Pipeline FAILED!"
-            }
+            echo "❌ Pipeline FAILED!"
         }
     }
 }
