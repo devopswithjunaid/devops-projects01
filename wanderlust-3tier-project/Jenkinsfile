@@ -211,10 +211,10 @@ pipeline {
             steps {
                 script {
                     try {
-                        withCredentials([string(credentialsId: 'docker-hub-token', variable: 'DOCKER_TOKEN')]) {
+                        withCredentials([usernamePassword(credentialsId: 'docker-hub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
                             sh '''
                                 echo "🚢 Pushing images to Docker Hub..."
-                                echo "$DOCKER_TOKEN" | docker login -u "${DOCKER_REGISTRY}" --password-stdin
+                                echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
                                 
                                 echo "📤 Pushing ${BACKEND_IMAGE}:${IMAGE_TAG}..."
                                 docker push ${BACKEND_IMAGE}:${IMAGE_TAG}
@@ -250,11 +250,11 @@ pipeline {
             steps {
                 script {
                     try {
-                        sshagent(credentials: ['jenkins']) {
+                        sshagent(credentials: ['deploy-server-ssh']) {
                             sh '''
                                 echo "🚀 Deploying on host with docker compose..."
-                                ssh -o StrictHostKeyChecking=no user@172.18.0.1 "
-                                    cd /home/user/devops-projects/wanderlust-3tier-project &&
+                                ssh -o StrictHostKeyChecking=no azureuser@20.55.29.56 "
+                                    cd /home/azureuser/devops-projects/wanderlust-3tier-project &&
                                     docker compose pull &&
                                     docker compose up -d &&
                                     echo '✅ Deployment completed successfully'
