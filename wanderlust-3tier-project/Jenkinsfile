@@ -135,13 +135,12 @@ pipeline {
         stage('Push to Docker Hub') {
             steps {
                 script {
-                    // ⚠️ TEMPORARY HARDCODED CREDENTIALS - NOT RECOMMENDED FOR PRODUCTION
+                    echo "🚢 Pushing images to Docker Hub..."
                     sh """
-                        echo "🚢 Pushing images to Docker Hub..."
                         echo 'Perry123@' | docker login -u devopswithjunaid --password-stdin
                         docker push ${BACKEND_IMAGE}:${IMAGE_TAG}
                         docker push ${BACKEND_IMAGE}:latest
-                        docker push ${FRONTEND_IMAGE}:${IMAGE_TAG}
+                        docker push ${FRONTEND_IMAGE}:${IMAGE_TAG}  
                         docker push ${FRONTEND_IMAGE}:latest
                     """
                     env.DOCKER_PUSH_SUCCESS = "true"
