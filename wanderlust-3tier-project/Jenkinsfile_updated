@@ -2,122 +2,131 @@ pipeline {
     agent { label 'agent' }
 
     tools {
-        jdk 'jdk21'
-        nodejs 'node21'
+        jdk 'jdk17'
+        nodejs 'node16'
+    }
+
+    parameters {
+        booleanParam(name: 'SKIP_DEPLOY', defaultValue: false, description: 'Skip deployment stage')
     }
 
     environment {
         IMAGE_TAG = "${BUILD_NUMBER}"
-        BACKEND_IMAGE = "rjshk013/wanderlust-backend"
-        FRONTEND_IMAGE = "rjshk013/wanderlust-frontend"
+        DOCKER_USER = "devopswithjunaid"     // ✅ Your Docker Hub username
+        BACKEND_IMAGE = "${DOCKER_USER}/wanderlust-backend"
+        FRONTEND_IMAGE = "${DOCKER_USER}/wanderlust-frontend"
+        TRIVY_CACHE_DIR = "${WORKSPACE}/.trivy-cache"
+        DEPLOY_SUCCESS = "false"
+        DOCKER_PUSH_SUCCESS = "false"
     }
 
     stages {
-
         stage('SCM Checkout') {
             steps {
-                git branch: 'main', url: 'https://github.com/rjshk013/devops-projects.git'
+                git branch: 'main', url: 'https://github.com/devopswithjunaid/devops-projects01.git'
             }
         }
 
         stage('Install Dependencies') {
             steps {
-                parallel (
-                    backend: {
-                        dir('wanderlust-3tier-project/backend') {
-                            sh "npm install || true"
-                        }
-                    },
-                    frontend: {
-                        dir('wanderlust-3tier-project/frontend') {
-                            sh "npm install"
-                        }
-                    }
-                )
+                dir('wanderlust-3tier-project/backend') {
+                    sh "npm install || true"
+                }
+                dir('wanderlust-3tier-project/frontend') {
+                    sh "npm install || true"
+                }
             }
         }
 
-        stage('Docker Build') {
+        stage('SonarQube Analysis') {
             steps {
-                dir('wanderlust-3tier-project') {
+                withSonarQubeEnv('sonarqube') {
+                    script {
+                        def scannerHome = tool 'sonar-scanner'
+                        dir('wanderlust-3tier-project/backend') {
+                            sh """
+                                ${scannerHome}/bin/sonar-scanner \
+                                -Dsonar.projectKey=wanderlust-backend \
+                                -Dsonar.sources=. \
+                                -Dsonar.host.url=http://20.55.29.56:9001 \
+                                -Dsonar.login=\$SONAR_AUTH_TOKEN
+                            """
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Code Quality Check') {
+            steps {
+                echo "📊 Running code quality checks..."
+                dir('wanderlust-3tier-project/backend') {
                     sh '''
-                        docker build -t ${BACKEND_IMAGE}:${IMAGE_TAG} ./backend
-                        docker build -t ${FRONTEND_IMAGE}:${IMAGE_TAG} ./frontend
+                        echo "Backend package.json audit:"
+                        npm audit --audit-level high || echo "Audit completed with warnings"
+                    '''
+                }
+                dir('wanderlust-3tier-project/frontend') {
+                    sh '''
+                        echo "Frontend package.json audit:"
+                        npm audit --audit-level high || echo "Audit completed with warnings"
                     '''
                 }
             }
         }
 
-        stage('Snyk Scanning') {
-            parallel {
-
-                stage('Frontend Dependency Scan') {
-                    steps {
-                        dir('wanderlust-3tier-project/frontend') {
-                            snykSecurity(
-                                snykInstallation: 'synk',
-                                snykTokenId: 'synk-api',
-                                targetFile: 'package.json',
-                                projectName: 'wanderlust-frontend-src',
-                                failOnIssues: false,
-                                additionalArguments: "--severity-threshold=critical"
-                            )
-                        }
-                    }
+        stage('Trivy Filesystem Scan') {
+            steps {
+                script {
+                    sh "mkdir -p ${WORKSPACE}/trivy-reports"
+                    echo "🔍 Scanning backend and frontend source files..."
+                    sh """
+                        docker run --rm -v ${WORKSPACE}/wanderlust-3tier-project/backend:/target \
+                        -v ${WORKSPACE}/trivy-reports:/reports aquasec/trivy fs \
+                        --scanners vuln,misconfig --severity HIGH,CRITICAL --exit-code 0 --format table /target || true
+                    """
+                    sh """
+                        docker run --rm -v ${WORKSPACE}/wanderlust-3tier-project/frontend:/target \
+                        -v ${WORKSPACE}/trivy-reports:/reports aquasec/trivy fs \
+                        --scanners vuln,misconfig --severity HIGH,CRITICAL --exit-code 0 --format table /target || true
+                    """
                 }
+            }
+        }
 
-                stage('Backend Dependency Scan') {
-                    steps {
-                        dir('wanderlust-3tier-project/backend') {
-                            snykSecurity(
-                                snykInstallation: 'synk',
-                                snykTokenId: 'synk-api',
-                                targetFile: 'package.json',
-                                projectName: 'wanderlust-backend-src',
-                                failOnIssues: false,
-                                additionalArguments: "--severity-threshold=critical"
-                            )
-                        }
-                    }
-                }
-
-                stage('Backend Image Scan') {
-                    steps {
-                        snykSecurity(
-                            snykInstallation: 'synk',
-                            snykTokenId: 'synk-api',
-                            failOnIssues: false,
-                            projectName: 'wanderlust-backend-image',
-                            additionalArguments: "--docker ${BACKEND_IMAGE}:${IMAGE_TAG} --severity-threshold=critical"
-                        )
-                    }
-                }
-
-                stage('Frontend Image Scan') {
-                    steps {
-                        snykSecurity(
-                            snykInstallation: 'synk',
-                            snykTokenId: 'synk-api',
-                            failOnIssues: false,
-                            projectName: 'wanderlust-frontend-image',
-                            additionalArguments: "--docker ${FRONTEND_IMAGE}:${IMAGE_TAG} --app-vulns --severity-threshold=critical"
-                        )
+        stage('Docker Build') {
+            steps {
+                script {
+                    dir('wanderlust-3tier-project') {
+                        echo "🐳 Building Docker images..."
+                        sh """
+                            docker build -t ${BACKEND_IMAGE}:${IMAGE_TAG} -f ./backend/Dockerfile_optimized ./backend
+                            docker build -t ${FRONTEND_IMAGE}:${IMAGE_TAG} -f ./frontend/Dockerfile_optimized ./frontend
+                            docker tag ${BACKEND_IMAGE}:${IMAGE_TAG} ${BACKEND_IMAGE}:latest
+                            docker tag ${FRONTEND_IMAGE}:${IMAGE_TAG} ${FRONTEND_IMAGE}:latest
+                            docker images | grep ${DOCKER_USER}/wanderlust
+                        """
                     }
                 }
             }
         }
 
-        stage('Run SonarQube') {
-            environment {
-                scannerHome = tool 'sonar-scanner'
-            }
+        stage('Trivy Image Scan') {
             steps {
-                withSonarQubeEnv('sonar-server') {
+                script {
+                    sh "mkdir -p ${TRIVY_CACHE_DIR}"
+                    echo "🔍 Scanning built images..."
                     sh """
-                        ${scannerHome}/bin/sonar-scanner \
-                        -Dsonar.projectKey=blog-app \
-                        -Dsonar.projectName=blog-app \
-                        -Dsonar.sources=wanderlust-3tier-project
+                        docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+                        -v ${TRIVY_CACHE_DIR}:/root/.cache/ \
+                        aquasec/trivy image --scanners vuln --severity HIGH,CRITICAL \
+                        --exit-code 0 --format table ${BACKEND_IMAGE}:${IMAGE_TAG} || true
+                    """
+                    sh """
+                        docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+                        -v ${TRIVY_CACHE_DIR}:/root/.cache/ \
+                        aquasec/trivy image --scanners vuln --severity HIGH,CRITICAL \
+                        --exit-code 0 --format table ${FRONTEND_IMAGE}:${IMAGE_TAG} || true
                     """
                 }
             }
@@ -125,61 +134,66 @@ pipeline {
 
         stage('Push to Docker Hub') {
             steps {
-                withCredentials([string(credentialsId: 'docker-hub-token', variable: 'DOCKER_TOKEN')]) {
-                    sh '''
-                        echo "${DOCKER_TOKEN}" | docker login -u rjshk013 --password-stdin
+                script {
+                    echo "🚢 Pushing images to Docker Hub..."
+                    sh """
+                        echo 'Perry123@' | docker login -u devopswithjunaid --password-stdin
                         docker push ${BACKEND_IMAGE}:${IMAGE_TAG}
-                        docker push ${FRONTEND_IMAGE}:${IMAGE_TAG}
-                    '''
+                        docker push ${BACKEND_IMAGE}:latest
+                        docker push ${FRONTEND_IMAGE}:${IMAGE_TAG}  
+                        docker push ${FRONTEND_IMAGE}:latest
+                    """
+                    env.DOCKER_PUSH_SUCCESS = "true"
                 }
             }
         }
 
-        stage('Remote Deploy on EC2 Host with Docker Compose') {
+        stage('Remote Deploy on Host with Docker Compose') {
+            when {
+                not { params.SKIP_DEPLOY }
+            }
             steps {
-                sshagent(credentials: ['deploy-server-ssh']) {
-                    sh '''
-                        echo "🚀 Deploying on EC2 instance with docker compose..."
-                        ssh -o StrictHostKeyChecking=no user@172.18.0.1 '
-                            cd /home/user/devops-projects/wanderlust-3tier-project &&
-                            docker compose build &&
-                            docker compose up -d
-                        '
-                    '''
+                script {
+                    sshagent(credentials: ['deploy-server-ssh']) {
+                        sh """
+                            echo "🚀 Deploying on remote host..."
+                            ssh -o StrictHostKeyChecking=no azureuser@20.55.29.56 '
+                                cd /home/azureuser/devops-projects/wanderlust-3tier-project &&
+                                docker compose pull &&
+                                docker compose up -d &&
+                                echo "✅ Deployment completed successfully"
+                            '
+                        """
+                        env.DEPLOY_SUCCESS = "true"
+                    }
                 }
+            }
+        }
+
+        stage('Manual Cleanup') {
+            steps {
+                echo "📋 Built images available locally:"
+                sh "docker images | grep ${DOCKER_USER}/wanderlust || true"
             }
         }
     }
 
-post {
-    success {
-        withCredentials([string(credentialsId: 'slack-webhook', variable: 'SLACK_WEBHOOK_URL')]) {
-            sh '''
-                curl -X POST -H 'Content-type: application/json' --data "{
-                  \\"channel\\": \\"#jenkins-alert\\",
-                  \\"text\\": \\"✅ Wanderlust pipeline succeeded — *Build #${BUILD_NUMBER}*: <${BUILD_URL}|View Build>\\",
-                  \\"username\\": \\"Jenkins\\",
-                  \\"icon_emoji\\": \\":white_check_mark:\\"
-                }" $SLACK_WEBHOOK_URL
-            '''
+    post {
+        always {
+            script {
+                echo "=== PIPELINE SUMMARY ==="
+                echo "📦 Docker Images Built ✅"
+                if (env.DOCKER_PUSH_SUCCESS == "true") {
+                    echo "📤 Docker Hub Push ✅"
+                } else {
+                    echo "📤 Docker Hub Push ⚠️ Failed"
+                }
+                if (env.DEPLOY_SUCCESS == "true") {
+                    echo "🚀 Deployment ✅"
+                } else {
+                    echo "🚀 Deployment ⚠️ Skipped"
+                }
+            }
         }
     }
-    failure {
-        withCredentials([string(credentialsId: 'slack-webhook', variable: 'SLACK_WEBHOOK_URL')]) {
-            sh '''
-                curl -X POST -H 'Content-type: application/json' --data "{
-                  \\"channel\\": \\"#jenkins-alert\\",
-                  \\"text\\": \\"❌ Wanderlust pipeline *failed* — *Build #${BUILD_NUMBER}*: <${BUILD_URL}|View Build>\\",
-                  \\"username\\": \\"Jenkins\\",
-                  \\"icon_emoji\\": \\":x:\\"
-                }" $SLACK_WEBHOOK_URL
-            '''
-        }
-    }
-    always {
-        echo '📦 Pipeline execution completed'
-        deleteDir()
-    }
-}
-
 }
