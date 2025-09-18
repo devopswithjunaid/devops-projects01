@@ -12,10 +12,9 @@ pipeline {
 
     environment {
         IMAGE_TAG = "${BUILD_NUMBER}"
-        DOCKER_REGISTRY = "rjshk013"
-        BACKEND_IMAGE = "${DOCKER_REGISTRY}/wanderlust-backend"
-        FRONTEND_IMAGE = "${DOCKER_REGISTRY}/wanderlust-frontend"
-        // Add environment variables for better control
+        DOCKER_USER = "devopswithjunaid"     // ✅ Your Docker Hub username
+        BACKEND_IMAGE = "${DOCKER_USER}/wanderlust-backend"
+        FRONTEND_IMAGE = "${DOCKER_USER}/wanderlust-frontend"
         TRIVY_CACHE_DIR = "${WORKSPACE}/.trivy-cache"
         DEPLOY_SUCCESS = "false"
         DOCKER_PUSH_SUCCESS = "false"
@@ -80,63 +79,17 @@ pipeline {
             steps {
                 script {
                     sh "mkdir -p ${WORKSPACE}/trivy-reports"
-                    
-                    echo "🔍 Scanning filesystem at ${WORKSPACE}/wanderlust-3tier-project/backend..."
+                    echo "🔍 Scanning backend and frontend source files..."
                     sh """
-                        docker run --rm \
-                        -v ${WORKSPACE}/wanderlust-3tier-project/backend:/target \
-                        -v ${WORKSPACE}/trivy-reports:/reports \
-                        aquasec/trivy fs \
-                        --scanners vuln \
-                        --severity HIGH,CRITICAL \
-                        --exit-code 0 \
-                        --format table /target || true
+                        docker run --rm -v ${WORKSPACE}/wanderlust-3tier-project/backend:/target \
+                        -v ${WORKSPACE}/trivy-reports:/reports aquasec/trivy fs \
+                        --scanners vuln,misconfig --severity HIGH,CRITICAL --exit-code 0 --format table /target || true
                     """
-                    
                     sh """
-                        docker run --rm \
-                        -v ${WORKSPACE}/wanderlust-3tier-project/backend:/target \
-                        -v ${WORKSPACE}/trivy-reports:/reports \
-                        aquasec/trivy fs \
-                        --scanners misconfig \
-                        --severity HIGH,CRITICAL \
-                        --exit-code 0 \
-                        --format json /target || true
+                        docker run --rm -v ${WORKSPACE}/wanderlust-3tier-project/frontend:/target \
+                        -v ${WORKSPACE}/trivy-reports:/reports aquasec/trivy fs \
+                        --scanners vuln,misconfig --severity HIGH,CRITICAL --exit-code 0 --format table /target || true
                     """
-                    
-                    echo "🔍 Scanning filesystem at ${WORKSPACE}/wanderlust-3tier-project/frontend..."
-                    sh """
-                        docker run --rm \
-                        -v ${WORKSPACE}/wanderlust-3tier-project/frontend:/target \
-                        -v ${WORKSPACE}/trivy-reports:/reports \
-                        aquasec/trivy fs \
-                        --scanners vuln \
-                        --severity HIGH,CRITICAL \
-                        --exit-code 0 \
-                        --format table /target || true
-                    """
-                    
-                    sh """
-                        docker run --rm \
-                        -v ${WORKSPACE}/wanderlust-3tier-project/frontend:/target \
-                        -v ${WORKSPACE}/trivy-reports:/reports \
-                        aquasec/trivy fs \
-                        --scanners misconfig \
-                        --severity HIGH,CRITICAL \
-                        --exit-code 0 \
-                        --format json /target || true
-                    """
-
-                    // Generate summary report
-                    sh '''
-                        echo "# Trivy Filesystem Scan Summary"
-                        echo "## Backend Source Vulnerabilities"
-                        if [ -f "${WORKSPACE}/trivy-reports/trivy-backend-fs-vuln.txt" ]; then
-                            echo "```"
-                            grep -A 10 "CRITICAL\\|HIGH" "${WORKSPACE}/trivy-reports/trivy-backend-fs-vuln.txt" | head -20 || echo "No critical/high vulnerabilities found"
-                            echo "```"
-                        fi
-                    '''
                 }
             }
         }
@@ -148,17 +101,10 @@ pipeline {
                         echo "🐳 Building Docker images..."
                         sh """
                             docker build -t ${BACKEND_IMAGE}:${IMAGE_TAG} -f ./backend/Dockerfile_optimized ./backend
-                            echo "✅ Backend image built successfully"
-                            
                             docker build -t ${FRONTEND_IMAGE}:${IMAGE_TAG} -f ./frontend/Dockerfile_optimized ./frontend
-                            echo "✅ Frontend image built successfully"
-                            
-                            # Also tag with latest for easier pulls
                             docker tag ${BACKEND_IMAGE}:${IMAGE_TAG} ${BACKEND_IMAGE}:latest
                             docker tag ${FRONTEND_IMAGE}:${IMAGE_TAG} ${FRONTEND_IMAGE}:latest
-                            
-                            echo "📋 Built images:"
-                            docker images | grep ${DOCKER_REGISTRY}/wanderlust
+                            docker images | grep ${DOCKER_USER}/wanderlust
                         """
                     }
                 }
@@ -168,41 +114,20 @@ pipeline {
         stage('Trivy Image Scan') {
             steps {
                 script {
-                    // Create trivy cache directory
                     sh "mkdir -p ${TRIVY_CACHE_DIR}"
-                    
-                    echo "🔍 Scanning ${BACKEND_IMAGE}:${IMAGE_TAG}..."
+                    echo "🔍 Scanning built images..."
                     sh """
-                        docker run --rm \
-                        -v /var/run/docker.sock:/var/run/docker.sock \
+                        docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
                         -v ${TRIVY_CACHE_DIR}:/root/.cache/ \
-                        -v ${WORKSPACE}/trivy-reports:/reports \
-                        aquasec/trivy image \
-                        --scanners vuln \
-                        --severity HIGH,CRITICAL \
-                        --exit-code 0 \
-                        --format table ${BACKEND_IMAGE}:${IMAGE_TAG} || true
+                        aquasec/trivy image --scanners vuln --severity HIGH,CRITICAL \
+                        --exit-code 0 --format table ${BACKEND_IMAGE}:${IMAGE_TAG} || true
                     """
-                    
-                    echo "🔍 Scanning ${FRONTEND_IMAGE}:${IMAGE_TAG}..."
                     sh """
-                        docker run --rm \
-                        -v /var/run/docker.sock:/var/run/docker.sock \
+                        docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
                         -v ${TRIVY_CACHE_DIR}:/root/.cache/ \
-                        -v ${WORKSPACE}/trivy-reports:/reports \
-                        aquasec/trivy image \
-                        --scanners vuln \
-                        --severity HIGH,CRITICAL \
-                        --exit-code 0 \
-                        --format table ${FRONTEND_IMAGE}:${IMAGE_TAG} || true
+                        aquasec/trivy image --scanners vuln --severity HIGH,CRITICAL \
+                        --exit-code 0 --format table ${FRONTEND_IMAGE}:${IMAGE_TAG} || true
                     """
-
-                    sh '''
-                        echo "# Trivy Container Image Scan Summary"
-                        echo "## Images Scanned:"
-                        echo "- ${BACKEND_IMAGE}:${IMAGE_TAG}"
-                        echo "- ${FRONTEND_IMAGE}:${IMAGE_TAG}"
-                    '''
                 }
             }
         }
@@ -210,34 +135,16 @@ pipeline {
         stage('Push to Docker Hub') {
             steps {
                 script {
-                    try {
-                        withCredentials([usernamePassword(credentialsId: 'docker-hub-creds', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
-                            sh '''
-                                echo "🚢 Pushing images to Docker Hub..."
-                                echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin
-                                
-                                echo "📤 Pushing ${BACKEND_IMAGE}:${IMAGE_TAG}..."
-                                docker push ${BACKEND_IMAGE}:${IMAGE_TAG}
-                                
-                                echo "📤 Pushing ${BACKEND_IMAGE}:latest..."
-                                docker push ${BACKEND_IMAGE}:latest
-                                
-                                echo "📤 Pushing ${FRONTEND_IMAGE}:${IMAGE_TAG}..."  
-                                docker push ${FRONTEND_IMAGE}:${IMAGE_TAG}
-                                
-                                echo "📤 Pushing ${FRONTEND_IMAGE}:latest..."
-                                docker push ${FRONTEND_IMAGE}:latest
-                                
-                                echo "✅ All images pushed successfully to Docker Hub"
-                            '''
-                            env.DOCKER_PUSH_SUCCESS = "true"
-                        }
-                    } catch (Exception e) {
-                        echo "⚠️ Docker Hub push failed or skipped - credential 'docker-hub-token' not found"
-                        echo "ℹ️ Configure Docker Hub credential to enable automatic image pushing"
-                        echo "Error: ${e.getMessage()}"
-                        // Don't fail the build, but don't mark as unstable either
-                        echo "🔒 Images will be kept locally for manual push or deployment"
+                    withCredentials([usernamePassword(credentialsId: 'docker-hub-token', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+                        sh """
+                            echo "🚢 Pushing images to Docker Hub..."
+                            echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
+                            docker push ${BACKEND_IMAGE}:${IMAGE_TAG}
+                            docker push ${BACKEND_IMAGE}:latest
+                            docker push ${FRONTEND_IMAGE}:${IMAGE_TAG}
+                            docker push ${FRONTEND_IMAGE}:latest
+                        """
+                        env.DOCKER_PUSH_SUCCESS = "true"
                     }
                 }
             }
@@ -249,24 +156,17 @@ pipeline {
             }
             steps {
                 script {
-                    try {
-                        sshagent(credentials: ['deploy-server-ssh']) {
-                            sh '''
-                                echo "🚀 Deploying on host with docker compose..."
-                                ssh -o StrictHostKeyChecking=no azureuser@20.55.29.56 "
-                                    cd /home/azureuser/devops-projects/wanderlust-3tier-project &&
-                                    docker compose pull &&
-                                    docker compose up -d &&
-                                    echo '✅ Deployment completed successfully'
-                                "
-                            '''
-                            env.DEPLOY_SUCCESS = "true"
-                        }
-                    } catch (Exception e) {
-                        echo "⚠️ Deployment failed - SSH credential 'jenkins' not found or deployment target unreachable"
-                        echo "ℹ️ Configure SSH credential and ensure target server is accessible"
-                        echo "Error: ${e.getMessage()}"
-                        echo "🔒 Images will be kept locally for manual deployment"
+                    sshagent(credentials: ['deploy-server-ssh']) {
+                        sh """
+                            echo "🚀 Deploying on remote host..."
+                            ssh -o StrictHostKeyChecking=no azureuser@20.55.29.56 '
+                                cd /home/azureuser/devops-projects/wanderlust-3tier-project &&
+                                docker compose pull &&
+                                docker compose up -d &&
+                                echo "✅ Deployment completed successfully"
+                            '
+                        """
+                        env.DEPLOY_SUCCESS = "true"
                     }
                 }
             }
@@ -274,11 +174,8 @@ pipeline {
 
         stage('Manual Cleanup') {
             steps {
-                echo "🔒 Image cleanup disabled - all Docker images will be preserved locally"
-                echo "📋 Built images are available:"
-                sh '''
-                    docker images | grep ${DOCKER_REGISTRY}/wanderlust || echo "No wanderlust images found"
-                '''
+                echo "📋 Built images available locally:"
+                sh "docker images | grep ${DOCKER_USER}/wanderlust || true"
             }
         }
     }
@@ -286,82 +183,17 @@ pipeline {
     post {
         always {
             script {
-                // Archive artifacts if they exist
-                if (fileExists('trivy-reports')) {
-                    archiveArtifacts artifacts: 'trivy-reports/**/*', allowEmptyArchive: true
-                }
-                
-                // NO CLEANUP - Images are preserved permanently
-                echo "🔒 Docker images preserved permanently - no cleanup performed"
-                echo "📋 Local images available for manual use or deployment:"
-                sh '''
-                    echo "=== AVAILABLE DOCKER IMAGES ==="
-                    docker images | grep ${DOCKER_REGISTRY}/wanderlust || echo "No wanderlust images found"
-                '''
-                
+                echo "=== PIPELINE SUMMARY ==="
+                echo "📦 Docker Images Built ✅"
                 if (env.DOCKER_PUSH_SUCCESS == "true") {
-                    echo "✅ Images are also available on Docker Hub:"
-                    echo "   - ${DOCKER_REGISTRY}/wanderlust-backend:${IMAGE_TAG}"
-                    echo "   - ${DOCKER_REGISTRY}/wanderlust-backend:latest"
-                    echo "   - ${DOCKER_REGISTRY}/wanderlust-frontend:${IMAGE_TAG}"
-                    echo "   - ${DOCKER_REGISTRY}/wanderlust-frontend:latest"
-                }
-                
-                // Display final status
-                sh '''
-                    echo "=== PIPELINE SUMMARY ==="
-                    echo "📦 Docker Images Built: ✅"
-                    echo "🔍 Security Scans: ✅"
-                    echo "🔒 Image Cleanup: Disabled (Images Preserved)"
-                '''
-                
-                if (env.DOCKER_PUSH_SUCCESS == "true") {
-                    sh 'echo "📤 Docker Hub Push: ✅"'
+                    echo "📤 Docker Hub Push ✅"
                 } else {
-                    sh 'echo "📤 Docker Hub Push: ⚠️ Skipped (Configure docker-hub-token credential)"'
+                    echo "📤 Docker Hub Push ⚠️ Skipped"
                 }
-                
                 if (env.DEPLOY_SUCCESS == "true") {
-                    sh 'echo "🚀 Deployment: ✅"'
+                    echo "🚀 Deployment ✅"
                 } else {
-                    sh 'echo "🚀 Deployment: ⚠️ Skipped (Configure jenkins SSH credential)"'
-                }
-            }
-        }
-        
-        success {
-            script {
-                def deployStatus = env.DEPLOY_SUCCESS == "true" ? "🚀 Deployment: ✅" : "🚀 Deployment: ⚠️ Skipped"
-                def pushStatus = env.DOCKER_PUSH_SUCCESS == "true" ? "📤 Push: ✅" : "📤 Push: ⚠️ Skipped"
-                
-                // Send success notification
-                try {
-                    withCredentials([string(credentialsId: 'slack-webhook', variable: 'WEBHOOK')]) {
-                        sh """
-                            curl -X POST -H "Content-type: application/json" \
-                            --data '{"text": "✅ BUILD SUCCESS: MyApp-CI-CD #${BUILD_NUMBER}\\n🔗 Build URL: ${BUILD_URL}\\n📦 Images: ${BACKEND_IMAGE}:${IMAGE_TAG}, ${FRONTEND_IMAGE}:${IMAGE_TAG}\\n${pushStatus}\\n${deployStatus}"}' \
-                            "${WEBHOOK}"
-                        """
-                    }
-                } catch (Exception e) {
-                    echo "Notification webhook not configured"
-                }
-            }
-        }
-        
-        failure {
-            script {
-                // Send failure notification
-                try {
-                    withCredentials([string(credentialsId: 'slack-webhook', variable: 'WEBHOOK')]) {
-                        sh '''
-                            curl -X POST -H "Content-type: application/json" \
-                            --data '{"text": "❌ BUILD FAILED: MyApp-CI-CD #${BUILD_NUMBER}\\n🔗 Build URL: ${BUILD_URL}\\n💥 Pipeline failed - check logs for details"}' \
-                            "${WEBHOOK}"
-                        '''
-                    }
-                } catch (Exception e) {
-                    echo "Notification webhook not configured"
+                    echo "🚀 Deployment ⚠️ Skipped"
                 }
             }
         }
