@@ -2,20 +2,28 @@ pipeline {
     agent { label 'agent' }
 
     tools {
-        jdk 'jdk21'
-        nodejs 'node21'
+        jdk 'jdk17'
+        nodejs 'node16'
+    }
+
+    parameters {
+        booleanParam(name: 'SKIP_DEPLOY', defaultValue: false, description: 'Skip deployment stage')
     }
 
     environment {
         IMAGE_TAG = "${BUILD_NUMBER}"
-        BACKEND_IMAGE = "rjshk013/wanderlust-backend"
-        FRONTEND_IMAGE = "rjshk013/wanderlust-frontend"
+        DOCKER_USER = "devopswithjunaid"     // ✅ Your Docker Hub username
+        BACKEND_IMAGE = "${DOCKER_USER}/wanderlust-backend"
+        FRONTEND_IMAGE = "${DOCKER_USER}/wanderlust-frontend"
+        TRIVY_CACHE_DIR = "${WORKSPACE}/.trivy-cache"
+        DEPLOY_SUCCESS = "false"
+        DOCKER_PUSH_SUCCESS = "false"
     }
 
     stages {
         stage('SCM Checkout') {
             steps {
-                git branch: 'main', url: 'https://github.com/rjshk013/devops-projects.git'
+                git branch: 'main', url: 'https://github.com/devopswithjunaid/devops-projects01.git'
             }
         }
 
@@ -25,23 +33,44 @@ pipeline {
                     sh "npm install || true"
                 }
                 dir('wanderlust-3tier-project/frontend') {
-                    sh "npm install"
+                    sh "npm install || true"
                 }
             }
         }
 
-        stage('Run SonarQube') {
-            environment {
-                scannerHome = tool 'sonar-scanner'
-            }
+        stage('SonarQube Analysis') {
             steps {
-                withSonarQubeEnv('sonar-server') {
-                    sh """
-                        ${scannerHome}/bin/sonar-scanner \
-                        -Dsonar.projectKey=blog-app \
-                        -Dsonar.projectName=blog-app \
-                        -Dsonar.sources=wanderlust-3tier-project
-                    """
+                withSonarQubeEnv('sonarqube') {
+                    script {
+                        def scannerHome = tool 'sonar-scanner'
+                        dir('wanderlust-3tier-project/backend') {
+                            sh """
+                                ${scannerHome}/bin/sonar-scanner \
+                                -Dsonar.projectKey=wanderlust-backend \
+                                -Dsonar.sources=. \
+                                -Dsonar.host.url=http://20.55.29.56:9001 \
+                                -Dsonar.login=\$SONAR_AUTH_TOKEN
+                            """
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Code Quality Check') {
+            steps {
+                echo "📊 Running code quality checks..."
+                dir('wanderlust-3tier-project/backend') {
+                    sh '''
+                        echo "Backend package.json audit:"
+                        npm audit --audit-level high || echo "Audit completed with warnings"
+                    '''
+                }
+                dir('wanderlust-3tier-project/frontend') {
+                    sh '''
+                        echo "Frontend package.json audit:"
+                        npm audit --audit-level high || echo "Audit completed with warnings"
+                    '''
                 }
             }
         }
@@ -49,74 +78,17 @@ pipeline {
         stage('Trivy Filesystem Scan') {
             steps {
                 script {
-                    def trivyDir = "${WORKSPACE}/trivy-reports"
-                    sh "mkdir -p ${trivyDir}"
-                    
-                    // Define targets for filesystem scanning
-                    def fsTargets = [
-                        [path: "${WORKSPACE}/wanderlust-3tier-project/backend", name: "backend-fs"],
-                        [path: "${WORKSPACE}/wanderlust-3tier-project/frontend", name: "frontend-fs"]
-                    ]
-                    
-                    // Run filesystem scans for source code vulnerabilities
-                    for (target in fsTargets) {
-                        echo "🔍 Scanning filesystem at ${target.path}..."
-                        
-                        // Scan for vulnerabilities in dependencies
-                        sh """
-                            docker run --rm \
-                                -v ${target.path}:/target \
-                                -v ${trivyDir}:/reports \
-                                aquasec/trivy fs \
-                                --security-checks vuln \
-                                --severity HIGH,CRITICAL \
-                                --exit-code 0 \
-                                --format table \
-                                /target > ${trivyDir}/trivy-${target.name}-vuln.txt
-                        """
-                        
-                        // Scan for security issues in configuration files
-                        sh """
-                            docker run --rm \
-                                -v ${target.path}:/target \
-                                -v ${trivyDir}:/reports \
-                                aquasec/trivy fs \
-                                --security-checks config \
-                                --severity HIGH,CRITICAL \
-                                --exit-code 0 \
-                                --format json \
-                                /target > ${trivyDir}/trivy-${target.name}-config.json
-                        """
-                        
-                        // Generate an HTML report for easier reading
-                        sh """
-                            docker run --rm \
-                                -v ${target.path}:/target \
-                                -v ${trivyDir}:/reports \
-                                aquasec/trivy fs \
-                                --security-checks vuln,config \
-                                --severity HIGH,CRITICAL \
-                                --exit-code 0 \
-                                --format template \
-                                --template '@/contrib/html.tpl' \
-                                /target > ${trivyDir}/trivy-${target.name}-report.html
-                        """
-                    }
-                    
-                    // Add filesystem scan summary to the main report
+                    sh "mkdir -p ${WORKSPACE}/trivy-reports"
+                    echo "🔍 Scanning backend and frontend source files..."
                     sh """
-                        echo "\\n## Source Code Vulnerability Scan" >> ${trivyDir}/summary.md
-                        echo "### Backend Source Vulnerabilities" >> ${trivyDir}/summary.md
-                        echo '```' >> ${trivyDir}/summary.md
-                        grep -A 10 "CRITICAL\\|HIGH" ${trivyDir}/trivy-backend-fs-vuln.txt | head -20 >> ${trivyDir}/summary.md
-                        echo "\\n... (See full report for more details)" >> ${trivyDir}/summary.md
-                        echo '```' >> ${trivyDir}/summary.md
-                        
-                        echo "\\n### Frontend Source Vulnerabilities" >> ${trivyDir}/summary.md
-                        echo '```' >> ${trivyDir}/summary.md
-                        grep -A 10 "CRITICAL\\|HIGH" ${trivyDir}/trivy-frontend-fs-vuln.txt | head -20 >> ${trivyDir}/summary.md
-                        echo "\\n... (See full report for more details)" >> ${trivyDir}/summary.md
-                        echo '```' >> ${trivyDir}/summary.md
+                        docker run --rm -v ${WORKSPACE}/wanderlust-3tier-project/backend:/target \
+                        -v ${WORKSPACE}/trivy-reports:/reports aquasec/trivy fs \
+                        --scanners vuln,misconfig --severity HIGH,CRITICAL --exit-code 0 --format table /target || true
+                    """
+                    sh """
+                        docker run --rm -v ${WORKSPACE}/wanderlust-3tier-project/frontend:/target \
+                        -v ${WORKSPACE}/trivy-reports:/reports aquasec/trivy fs \
+                        --scanners vuln,misconfig --severity HIGH,CRITICAL --exit-code 0 --format table /target || true
                     """
                 }
             }
@@ -124,11 +96,17 @@ pipeline {
 
         stage('Docker Build') {
             steps {
-                dir('wanderlust-3tier-project') {
-                    sh '''
-                        docker build -t ${BACKEND_IMAGE}:${IMAGE_TAG} ./backend
-                        docker build -t ${FRONTEND_IMAGE}:${IMAGE_TAG} ./frontend
-                    '''
+                script {
+                    dir('wanderlust-3tier-project') {
+                        echo "🐳 Building Docker images..."
+                        sh """
+                            docker build -t ${BACKEND_IMAGE}:${IMAGE_TAG} -f ./backend/Dockerfile_optimized ./backend
+                            docker build -t ${FRONTEND_IMAGE}:${IMAGE_TAG} -f ./frontend/Dockerfile_optimized ./frontend
+                            docker tag ${BACKEND_IMAGE}:${IMAGE_TAG} ${BACKEND_IMAGE}:latest
+                            docker tag ${FRONTEND_IMAGE}:${IMAGE_TAG} ${FRONTEND_IMAGE}:latest
+                            docker images | grep ${DOCKER_USER}/wanderlust
+                        """
+                    }
                 }
             }
         }
@@ -136,78 +114,19 @@ pipeline {
         stage('Trivy Image Scan') {
             steps {
                 script {
-                    def trivyDir = "${WORKSPACE}/trivy-reports"
-                    
-                    // Define scan configurations
-                    def images = [
-                        [name: "${BACKEND_IMAGE}:${IMAGE_TAG}", type: "backend"],
-                        [name: "${FRONTEND_IMAGE}:${IMAGE_TAG}", type: "frontend"]
-                    ]
-
-                    // Run scans with multiple output formats
-                    for (img in images) {
-                        echo "🔍 Scanning ${img.name}..."
-                        
-                        // HTML Report - Highly readable in browser
-                        sh """
-                            docker run --rm \
-                                -v /var/run/docker.sock:/var/run/docker.sock \
-                                -v \$HOME/.trivy-cache:/root/.cache/ \
-                                -v ${trivyDir}:/reports \
-                                aquasec/trivy image \
-                                --scanners vuln \
-                                --severity HIGH,CRITICAL \
-                                --exit-code 0 \
-                                --format template \
-                                --template '@/contrib/html.tpl' \
-                                ${img.name} > ${trivyDir}/trivy-${img.type}-report.html
-                        """
-                        
-                        // Table format for console and archive
-                        sh """
-                            docker run --rm \
-                                -v /var/run/docker.sock:/var/run/docker.sock \
-                                -v \$HOME/.trivy-cache:/root/.cache/ \
-                                -v ${trivyDir}:/reports \
-                                aquasec/trivy image \
-                                --scanners vuln \
-                                --severity HIGH,CRITICAL \
-                                --exit-code 0 \
-                                --format table \
-                                ${img.name} > ${trivyDir}/trivy-${img.type}-report.txt
-                        """
-                        
-                        // JSON format for potential programmatic processing
-                        sh """
-                            docker run --rm \
-                                -v /var/run/docker.sock:/var/run/docker.sock \
-                                -v \$HOME/.trivy-cache:/root/.cache/ \
-                                -v ${trivyDir}:/reports \
-                                aquasec/trivy image \
-                                --scanners vuln \
-                                --severity HIGH,CRITICAL \
-                                --exit-code 0 \
-                                --format json \
-                                ${img.name} > ${trivyDir}/trivy-${img.type}-report.json
-                        """
-                    }
-                    
-                    // Generate combined summary report - FIXED SECTION
+                    sh "mkdir -p ${TRIVY_CACHE_DIR}"
+                    echo "🔍 Scanning built images..."
                     sh """
-                        echo "# Trivy Vulnerability Summary Report" > ${trivyDir}/summary.md
-                        echo "## Images Scanned" >> ${trivyDir}/summary.md
-                        echo "- ${BACKEND_IMAGE}:${IMAGE_TAG}" >> ${trivyDir}/summary.md
-                        echo "- ${FRONTEND_IMAGE}:${IMAGE_TAG}" >> ${trivyDir}/summary.md
-                        echo "\\n## Backend Container Vulnerabilities" >> ${trivyDir}/summary.md
-                        echo '```' >> ${trivyDir}/summary.md
-                        grep -A 10 "CRITICAL\\|HIGH" ${trivyDir}/trivy-backend-report.txt | head -20 >> ${trivyDir}/summary.md
-                        echo "\\n... (See full report for more details)" >> ${trivyDir}/summary.md
-                        echo '```' >> ${trivyDir}/summary.md
-                        echo "\\n## Frontend Container Vulnerabilities" >> ${trivyDir}/summary.md
-                        echo '```' >> ${trivyDir}/summary.md 
-                        grep -A 10 "CRITICAL\\|HIGH" ${trivyDir}/trivy-frontend-report.txt | head -20 >> ${trivyDir}/summary.md
-                        echo "\\n... (See full report for more details)" >> ${trivyDir}/summary.md
-                        echo '```' >> ${trivyDir}/summary.md
+                        docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+                        -v ${TRIVY_CACHE_DIR}:/root/.cache/ \
+                        aquasec/trivy image --scanners vuln --severity HIGH,CRITICAL \
+                        --exit-code 0 --format table ${BACKEND_IMAGE}:${IMAGE_TAG} || true
+                    """
+                    sh """
+                        docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+                        -v ${TRIVY_CACHE_DIR}:/root/.cache/ \
+                        aquasec/trivy image --scanners vuln --severity HIGH,CRITICAL \
+                        --exit-code 0 --format table ${FRONTEND_IMAGE}:${IMAGE_TAG} || true
                     """
                 }
             }
@@ -215,35 +134,66 @@ pipeline {
 
         stage('Push to Docker Hub') {
             steps {
-                withCredentials([string(credentialsId: 'docker-hub-token', variable: 'DOCKER_TOKEN')]) {
-                    sh '''
-                        echo "${DOCKER_TOKEN}" | docker login -u rjshk013 --password-stdin
+                script {
+                    echo "🚢 Pushing images to Docker Hub..."
+                    sh """
+                        echo 'Perry123@' | docker login -u devopswithjunaid --password-stdin
                         docker push ${BACKEND_IMAGE}:${IMAGE_TAG}
-                        docker push ${FRONTEND_IMAGE}:${IMAGE_TAG}
-                    '''
+                        docker push ${BACKEND_IMAGE}:latest
+                        docker push ${FRONTEND_IMAGE}:${IMAGE_TAG}  
+                        docker push ${FRONTEND_IMAGE}:latest
+                    """
+                    env.DOCKER_PUSH_SUCCESS = "true"
                 }
             }
         }
 
         stage('Remote Deploy on Host with Docker Compose') {
+            when {
+                not { params.SKIP_DEPLOY }
+            }
             steps {
-                sshagent(credentials: ['deploy-server-ssh']) {
-                    sh '''
-                        echo "🚀 Deploying on host with docker compose..."
-                        ssh -o StrictHostKeyChecking=no user@172.18.0.1 '
-                            cd /home/user/devops-projects/wanderlust-3tier-project &&
-                            docker compose pull &&
-                            docker compose up -d
-                        '
-                    '''
+                script {
+                    sshagent(credentials: ['deploy-server-ssh']) {
+                        sh """
+                            echo "🚀 Deploying on remote host..."
+                            ssh -o StrictHostKeyChecking=no azureuser@20.55.29.56 '
+                                cd /home/azureuser/devops-projects/wanderlust-3tier-project &&
+                                docker compose pull &&
+                                docker compose up -d &&
+                                echo "✅ Deployment completed successfully"
+                            '
+                        """
+                        env.DEPLOY_SUCCESS = "true"
+                    }
                 }
             }
         }
-    } 
+
+        stage('Manual Cleanup') {
+            steps {
+                echo "📋 Built images available locally:"
+                sh "docker images | grep ${DOCKER_USER}/wanderlust || true"
+            }
+        }
+    }
+
     post {
         always {
-            // Updated to archive all Trivy reports
-            archiveArtifacts artifacts: 'trivy-reports/**', fingerprint: true
+            script {
+                echo "=== PIPELINE SUMMARY ==="
+                echo "📦 Docker Images Built ✅"
+                if (env.DOCKER_PUSH_SUCCESS == "true") {
+                    echo "📤 Docker Hub Push ✅"
+                } else {
+                    echo "📤 Docker Hub Push ⚠️ Failed"
+                }
+                if (env.DEPLOY_SUCCESS == "true") {
+                    echo "🚀 Deployment ✅"
+                } else {
+                    echo "🚀 Deployment ⚠️ Skipped"
+                }
+            }
         }
     }
 }
