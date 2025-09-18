@@ -135,17 +135,16 @@ pipeline {
         stage('Push to Docker Hub') {
             steps {
                 script {
-                    withCredentials([usernamePassword(credentialsId: 'docker-hub-token', usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
-                        sh """
-                            echo "🚢 Pushing images to Docker Hub..."
-                            echo $DOCKER_PASS | docker login -u $DOCKER_USER --password-stdin
-                            docker push ${BACKEND_IMAGE}:${IMAGE_TAG}
-                            docker push ${BACKEND_IMAGE}:latest
-                            docker push ${FRONTEND_IMAGE}:${IMAGE_TAG}
-                            docker push ${FRONTEND_IMAGE}:latest
-                        """
-                        env.DOCKER_PUSH_SUCCESS = "true"
-                    }
+                    // ⚠️ TEMPORARY HARDCODED CREDENTIALS - NOT RECOMMENDED FOR PRODUCTION
+                    sh """
+                        echo "🚢 Pushing images to Docker Hub..."
+                        echo 'Perry123@' | docker login -u devopswithjunaid --password-stdin
+                        docker push ${BACKEND_IMAGE}:${IMAGE_TAG}
+                        docker push ${BACKEND_IMAGE}:latest
+                        docker push ${FRONTEND_IMAGE}:${IMAGE_TAG}
+                        docker push ${FRONTEND_IMAGE}:latest
+                    """
+                    env.DOCKER_PUSH_SUCCESS = "true"
                 }
             }
         }
@@ -188,7 +187,7 @@ pipeline {
                 if (env.DOCKER_PUSH_SUCCESS == "true") {
                     echo "📤 Docker Hub Push ✅"
                 } else {
-                    echo "📤 Docker Hub Push ⚠️ Skipped"
+                    echo "📤 Docker Hub Push ⚠️ Failed"
                 }
                 if (env.DEPLOY_SUCCESS == "true") {
                     echo "🚀 Deployment ✅"
