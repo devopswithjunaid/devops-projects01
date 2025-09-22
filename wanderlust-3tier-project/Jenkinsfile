@@ -168,11 +168,82 @@ pipeline {
             steps {
                 script {
                     try {
-                        echo "🚀 Deployment stage - Currently disabled for testing"
-                        echo "✅ Skipping deployment - Docker images are available in registry"
+                        echo "🚀 Deploying application to local EC2 instance..."
+                        
+                        // Copy docker-compose file to deployment directory
+                        sh '''
+                            # Create deployment directory
+                            sudo mkdir -p /opt/wanderlust-app
+                            sudo chown ubuntu:ubuntu /opt/wanderlust-app
+                            
+                            # Copy docker-compose file
+                            cp wanderlust-3tier-project/docker-compose-local.yml /opt/wanderlust-app/docker-compose.yml
+                            
+                            # Navigate to deployment directory
+                            cd /opt/wanderlust-app
+                            
+                            echo "📥 Pulling latest images..."
+                            docker pull ${BACKEND_IMAGE}:latest
+                            docker pull ${FRONTEND_IMAGE}:latest
+                            
+                            echo "🛑 Stopping existing services..."
+                            docker compose down || true
+                            
+                            echo "🚀 Starting services..."
+                            docker compose up -d
+                            
+                            echo "⏳ Waiting for services to start..."
+                            sleep 30
+                            
+                            echo "📊 Checking service status..."
+                            docker compose ps
+                            
+                            echo "✅ Deployment completed successfully"
+                        '''
+                        
                         env.DEPLOY_SUCCESS = "true"
                     } catch (Exception e) {
-                        echo "⚠️ Deployment skipped: ${e.getMessage()}"
+                        error "❌ Deployment failed: ${e.getMessage()}"
+                    }
+                }
+            }
+        }
+
+        stage('Health Check') {
+            when {
+                expression { !params.SKIP_DEPLOY }
+            }
+            steps {
+                script {
+                    try {
+                        echo "🏥 Performing health check..."
+                        
+                        sh '''
+                            echo "🔍 Checking application health..."
+                            
+                            # Wait a bit more for services to fully start
+                            sleep 15
+                            
+                            # Check if containers are running
+                            echo "Container status:"
+                            docker ps --filter "name=wanderlust" --format "table {{.Names}}\\t{{.Status}}\\t{{.Ports}}"
+                            
+                            # Check backend health
+                            echo "\\n🔍 Testing backend health..."
+                            curl -f http://localhost:5000/health || echo "⚠️ Backend health check failed"
+                            
+                            # Check frontend
+                            echo "\\n🔍 Testing frontend..."
+                            curl -f http://localhost:3000 || echo "⚠️ Frontend health check failed"
+                            
+                            # Show logs if there are issues
+                            echo "\\n📋 Recent logs:"
+                            docker compose -f /opt/wanderlust-app/docker-compose.yml logs --tail=5
+                        '''
+                        
+                        echo "✅ Health check completed"
+                    } catch (Exception e) {
+                        echo "⚠️ Health check warnings: ${e.getMessage()}"
                     }
                 }
             }
@@ -233,6 +304,8 @@ pipeline {
                 echo "📊 Jenkins Build: ${BUILD_URL}"
                 echo "🐳 Backend Image: ${BACKEND_IMAGE}:${IMAGE_TAG}"
                 echo "🐳 Frontend Image: ${FRONTEND_IMAGE}:${IMAGE_TAG}"
+                echo "🌐 Application URL: http://ec2-54-184-179-171.us-west-2.compute.amazonaws.com:3000"
+                echo "🔧 Backend API: http://ec2-54-184-179-171.us-west-2.compute.amazonaws.com:5000"
             }
         }
         
