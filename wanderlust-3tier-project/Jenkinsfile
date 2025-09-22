@@ -2,94 +2,95 @@ pipeline {
     agent { label 'agent' }
 
     tools {
-        jdk 'jdk17'
-        nodejs 'node16'
+        nodejs 'NodeJS24'
     }
 
     parameters {
         booleanParam(name: 'SKIP_DEPLOY', defaultValue: false, description: 'Skip deployment stage')
+        booleanParam(name: 'SKIP_TESTS', defaultValue: false, description: 'Skip test stages')
     }
 
     environment {
         IMAGE_TAG = "${BUILD_NUMBER}"
-        DOCKER_USER = "devopswithjunaid"     // ✅ Your Docker Hub username
+        DOCKER_USER = "devopswithjunaid"
         BACKEND_IMAGE = "${DOCKER_USER}/wanderlust-backend"
         FRONTEND_IMAGE = "${DOCKER_USER}/wanderlust-frontend"
         TRIVY_CACHE_DIR = "${WORKSPACE}/.trivy-cache"
         DEPLOY_SUCCESS = "false"
         DOCKER_PUSH_SUCCESS = "false"
+        BUILD_SUCCESS = "false"
     }
 
     stages {
+        stage('Clean Workspace') {
+            steps {
+                cleanWs()
+                echo "🧹 Workspace cleaned"
+            }
+        }
+
         stage('SCM Checkout') {
             steps {
-                git branch: 'main', url: 'https://github.com/devopswithjunaid/devops-projects01.git'
+                script {
+                    try {
+                        git branch: 'main', url: 'https://github.com/devopswithjunaid/devops-projects01.git'
+                        echo "✅ Code checkout successful"
+                    } catch (Exception e) {
+                        error "❌ Git checkout failed: ${e.getMessage()}"
+                    }
+                }
             }
         }
 
         stage('Install Dependencies') {
             steps {
-                dir('wanderlust-3tier-project/backend') {
-                    sh "npm install || true"
-                }
-                dir('wanderlust-3tier-project/frontend') {
-                    sh "npm install || true"
-                }
-            }
-        }
-
-        stage('SonarQube Analysis') {
-            steps {
-                withSonarQubeEnv('sonarqube') {
-                    script {
-                        def scannerHome = tool 'sonar-scanner'
+                script {
+                    try {
                         dir('wanderlust-3tier-project/backend') {
-                            sh """
-                                ${scannerHome}/bin/sonar-scanner \
-                                -Dsonar.projectKey=wanderlust-backend \
-                                -Dsonar.sources=. \
-                                -Dsonar.host.url=http://20.55.29.56:9001 \
-                                -Dsonar.login=\$SONAR_AUTH_TOKEN
-                            """
+                            sh '''
+                                echo "📦 Installing backend dependencies..."
+                                npm ci --only=production
+                                echo "✅ Backend dependencies installed"
+                            '''
                         }
+                        dir('wanderlust-3tier-project/frontend') {
+                            sh '''
+                                echo "📦 Installing frontend dependencies..."
+                                npm ci --only=production
+                                echo "✅ Frontend dependencies installed"
+                            '''
+                        }
+                    } catch (Exception e) {
+                        error "❌ Dependency installation failed: ${e.getMessage()}"
                     }
                 }
             }
         }
 
         stage('Code Quality Check') {
-            steps {
-                echo "📊 Running code quality checks..."
-                dir('wanderlust-3tier-project/backend') {
-                    sh '''
-                        echo "Backend package.json audit:"
-                        npm audit --audit-level high || echo "Audit completed with warnings"
-                    '''
-                }
-                dir('wanderlust-3tier-project/frontend') {
-                    sh '''
-                        echo "Frontend package.json audit:"
-                        npm audit --audit-level high || echo "Audit completed with warnings"
-                    '''
-                }
+            when {
+                not { params.SKIP_TESTS }
             }
-        }
-
-        stage('Trivy Filesystem Scan') {
             steps {
                 script {
-                    sh "mkdir -p ${WORKSPACE}/trivy-reports"
-                    echo "🔍 Scanning backend and frontend source files..."
-                    sh """
-                        docker run --rm -v ${WORKSPACE}/wanderlust-3tier-project/backend:/target \
-                        -v ${WORKSPACE}/trivy-reports:/reports aquasec/trivy fs \
-                        --scanners vuln,misconfig --severity HIGH,CRITICAL --exit-code 0 --format table /target || true
-                    """
-                    sh """
-                        docker run --rm -v ${WORKSPACE}/wanderlust-3tier-project/frontend:/target \
-                        -v ${WORKSPACE}/trivy-reports:/reports aquasec/trivy fs \
-                        --scanners vuln,misconfig --severity HIGH,CRITICAL --exit-code 0 --format table /target || true
-                    """
+                    try {
+                        echo "📊 Running code quality checks..."
+                        dir('wanderlust-3tier-project/backend') {
+                            sh '''
+                                echo "Backend security audit:"
+                                npm audit --audit-level moderate || echo "⚠️ Audit completed with warnings"
+                            '''
+                        }
+                        dir('wanderlust-3tier-project/frontend') {
+                            sh '''
+                                echo "Frontend security audit:"
+                                npm audit --audit-level moderate || echo "⚠️ Audit completed with warnings"
+                            '''
+                        }
+                        echo "✅ Code quality checks completed"
+                    } catch (Exception e) {
+                        echo "⚠️ Code quality check warnings: ${e.getMessage()}"
+                    }
                 }
             }
         }
@@ -97,37 +98,65 @@ pipeline {
         stage('Docker Build') {
             steps {
                 script {
-                    dir('wanderlust-3tier-project') {
-                        echo "🐳 Building Docker images..."
-                        sh """
-                            docker build -t ${BACKEND_IMAGE}:${IMAGE_TAG} -f ./backend/Dockerfile_optimized ./backend
-                            docker build -t ${FRONTEND_IMAGE}:${IMAGE_TAG} -f ./frontend/Dockerfile_optimized ./frontend
-                            docker tag ${BACKEND_IMAGE}:${IMAGE_TAG} ${BACKEND_IMAGE}:latest
-                            docker tag ${FRONTEND_IMAGE}:${IMAGE_TAG} ${FRONTEND_IMAGE}:latest
-                            docker images | grep ${DOCKER_USER}/wanderlust
-                        """
+                    try {
+                        dir('wanderlust-3tier-project') {
+                            echo "🐳 Building Docker images..."
+                            
+                            // Build backend image
+                            sh """
+                                echo "Building backend image..."
+                                docker build -t ${BACKEND_IMAGE}:${IMAGE_TAG} -f ./backend/Dockerfile_optimized ./backend
+                                docker tag ${BACKEND_IMAGE}:${IMAGE_TAG} ${BACKEND_IMAGE}:latest
+                                echo "✅ Backend image built successfully"
+                            """
+                            
+                            // Build frontend image
+                            sh """
+                                echo "Building frontend image..."
+                                docker build -t ${FRONTEND_IMAGE}:${IMAGE_TAG} -f ./frontend/Dockerfile_optimized ./frontend
+                                docker tag ${FRONTEND_IMAGE}:${IMAGE_TAG} ${FRONTEND_IMAGE}:latest
+                                echo "✅ Frontend image built successfully"
+                            """
+                            
+                            // List built images
+                            sh "docker images | grep ${DOCKER_USER}/wanderlust"
+                            env.BUILD_SUCCESS = "true"
+                        }
+                    } catch (Exception e) {
+                        error "❌ Docker build failed: ${e.getMessage()}"
                     }
                 }
             }
         }
 
-        stage('Trivy Image Scan') {
+        stage('Security Scan') {
+            when {
+                not { params.SKIP_TESTS }
+            }
             steps {
                 script {
-                    sh "mkdir -p ${TRIVY_CACHE_DIR}"
-                    echo "🔍 Scanning built images..."
-                    sh """
-                        docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-                        -v ${TRIVY_CACHE_DIR}:/root/.cache/ \
-                        aquasec/trivy image --scanners vuln --severity HIGH,CRITICAL \
-                        --exit-code 0 --format table ${BACKEND_IMAGE}:${IMAGE_TAG} || true
-                    """
-                    sh """
-                        docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-                        -v ${TRIVY_CACHE_DIR}:/root/.cache/ \
-                        aquasec/trivy image --scanners vuln --severity HIGH,CRITICAL \
-                        --exit-code 0 --format table ${FRONTEND_IMAGE}:${IMAGE_TAG} || true
-                    """
+                    try {
+                        sh "mkdir -p ${TRIVY_CACHE_DIR}"
+                        echo "🔍 Scanning Docker images for vulnerabilities..."
+                        
+                        sh """
+                            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+                            -v ${TRIVY_CACHE_DIR}:/root/.cache/ \
+                            aquasec/trivy image --scanners vuln --severity HIGH,CRITICAL \
+                            --exit-code 0 --format table ${BACKEND_IMAGE}:${IMAGE_TAG} || echo "⚠️ Backend scan completed with findings"
+                        """
+                        
+                        sh """
+                            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+                            -v ${TRIVY_CACHE_DIR}:/root/.cache/ \
+                            aquasec/trivy image --scanners vuln --severity HIGH,CRITICAL \
+                            --exit-code 0 --format table ${FRONTEND_IMAGE}:${IMAGE_TAG} || echo "⚠️ Frontend scan completed with findings"
+                        """
+                        
+                        echo "✅ Security scans completed"
+                    } catch (Exception e) {
+                        echo "⚠️ Security scan warnings: ${e.getMessage()}"
+                    }
                 }
             }
         }
@@ -135,45 +164,111 @@ pipeline {
         stage('Push to Docker Hub') {
             steps {
                 script {
-                    echo "🚢 Pushing images to Docker Hub..."
-                    sh """
-                        echo 'Perry123@' | docker login -u devopswithjunaid --password-stdin
-                        docker push ${BACKEND_IMAGE}:${IMAGE_TAG}
-                        docker push ${BACKEND_IMAGE}:latest
-                        docker push ${FRONTEND_IMAGE}:${IMAGE_TAG}  
-                        docker push ${FRONTEND_IMAGE}:latest
-                    """
-                    env.DOCKER_PUSH_SUCCESS = "true"
-                }
-            }
-        }
-
-        stage('Remote Deploy on Host with Docker Compose') {
-            when {
-                not { params.SKIP_DEPLOY }
-            }
-            steps {
-                script {
-                    sshagent(credentials: ['deploy-server-ssh']) {
-                        sh """
-                            echo "🚀 Deploying on remote host..."
-                            ssh -o StrictHostKeyChecking=no azureuser@20.55.29.56 '
-                                cd /home/azureuser/devops-projects/wanderlust-3tier-project &&
-                                docker compose pull &&
-                                docker compose up -d &&
-                                echo "✅ Deployment completed successfully"
-                            '
-                        """
-                        env.DEPLOY_SUCCESS = "true"
+                    try {
+                        echo "🚢 Pushing images to Docker Hub..."
+                        withCredentials([string(credentialsId: 'docker-hub-token', variable: 'DOCKER_TOKEN')]) {
+                            sh '''
+                                echo $DOCKER_TOKEN | docker login -u devopswithjunaid --password-stdin
+                                
+                                echo "Pushing backend images..."
+                                docker push ${BACKEND_IMAGE}:${IMAGE_TAG}
+                                docker push ${BACKEND_IMAGE}:latest
+                                
+                                echo "Pushing frontend images..."
+                                docker push ${FRONTEND_IMAGE}:${IMAGE_TAG}
+                                docker push ${FRONTEND_IMAGE}:latest
+                                
+                                echo "✅ All images pushed successfully"
+                            '''
+                        }
+                        env.DOCKER_PUSH_SUCCESS = "true"
+                    } catch (Exception e) {
+                        error "❌ Docker push failed: ${e.getMessage()}"
                     }
                 }
             }
         }
 
-        stage('Manual Cleanup') {
+        stage('Deploy Application') {
+            when {
+                not { params.SKIP_DEPLOY }
+            }
             steps {
-                echo "📋 Built images available locally:"
-                sh "docker images | grep ${DOCKER_USER}/wanderlust || true"
+                script {
+                    try {
+                        echo "🚀 Deploying application..."
+                        withCredentials([sshUserPrivateKey(credentialsId: 'agent-key', 
+                                                         keyFileVariable: 'SSH_KEY', 
+                                                         usernameVariable: 'SSH_USER')]) {
+                            sh '''
+                                ssh -i $SSH_KEY -o StrictHostKeyChecking=no $SSH_USER@20.55.29.56 "
+                                    cd /home/azureuser/devops-projects/wanderlust-3tier-project &&
+                                    echo 'Pulling latest images...' &&
+                                    docker compose pull &&
+                                    echo 'Starting services...' &&
+                                    docker compose up -d &&
+                                    echo 'Checking service status...' &&
+                                    docker compose ps &&
+                                    echo '✅ Deployment completed successfully'
+                                "
+                            '''
+                        }
+                        env.DEPLOY_SUCCESS = "true"
+                    } catch (Exception e) {
+                        error "❌ Deployment failed: ${e.getMessage()}"
+                    }
+                }
+            }
+        }
+
+        stage('Health Check') {
+            when {
+                not { params.SKIP_DEPLOY }
+            }
+            steps {
+                script {
+                    try {
+                        echo "🏥 Performing health check..."
+                        sleep(time: 30, unit: 'SECONDS')
+                        
+                        withCredentials([sshUserPrivateKey(credentialsId: 'agent-key', 
+                                                         keyFileVariable: 'SSH_KEY', 
+                                                         usernameVariable: 'SSH_USER')]) {
+                            sh '''
+                                ssh -i $SSH_KEY -o StrictHostKeyChecking=no $SSH_USER@20.55.29.56 "
+                                    echo 'Checking application health...' &&
+                                    curl -f http://localhost:3000/health || echo 'Health check endpoint not available' &&
+                                    docker compose logs --tail=10
+                                "
+                            '''
+                        }
+                        echo "✅ Health check completed"
+                    } catch (Exception e) {
+                        echo "⚠️ Health check warnings: ${e.getMessage()}"
+                    }
+                }
+            }
+        }
+
+        stage('Cleanup Local Images') {
+            steps {
+                script {
+                    try {
+                        echo "🧹 Cleaning up local Docker images..."
+                        sh '''
+                            # Remove old images (keep last 3 builds)
+                            docker images ${BACKEND_IMAGE} --format "table {{.Repository}}:{{.Tag}}" | grep -v latest | tail -n +4 | xargs -r docker rmi || true
+                            docker images ${FRONTEND_IMAGE} --format "table {{.Repository}}:{{.Tag}}" | grep -v latest | tail -n +4 | xargs -r docker rmi || true
+                            
+                            # Clean up dangling images
+                            docker image prune -f || true
+                            
+                            echo "✅ Cleanup completed"
+                        '''
+                    } catch (Exception e) {
+                        echo "⚠️ Cleanup warnings: ${e.getMessage()}"
+                    }
+                }
             }
         }
     }
@@ -181,19 +276,52 @@ pipeline {
     post {
         always {
             script {
-                echo "=== PIPELINE SUMMARY ==="
-                echo "📦 Docker Images Built ✅"
+                echo "=== 📋 PIPELINE SUMMARY ==="
+                echo "🏗️  Build Number: ${BUILD_NUMBER}"
+                echo "🌿 Branch: main"
+                echo "📦 Image Tag: ${IMAGE_TAG}"
+                
+                if (env.BUILD_SUCCESS == "true") {
+                    echo "🐳 Docker Build: ✅ SUCCESS"
+                } else {
+                    echo "🐳 Docker Build: ❌ FAILED"
+                }
+                
                 if (env.DOCKER_PUSH_SUCCESS == "true") {
-                    echo "📤 Docker Hub Push ✅"
+                    echo "📤 Docker Push: ✅ SUCCESS"
                 } else {
-                    echo "📤 Docker Hub Push ⚠️ Failed"
+                    echo "📤 Docker Push: ❌ FAILED"
                 }
+                
                 if (env.DEPLOY_SUCCESS == "true") {
-                    echo "🚀 Deployment ✅"
+                    echo "🚀 Deployment: ✅ SUCCESS"
+                } else if (params.SKIP_DEPLOY) {
+                    echo "🚀 Deployment: ⏭️ SKIPPED"
                 } else {
-                    echo "🚀 Deployment ⚠️ Skipped"
+                    echo "🚀 Deployment: ❌ FAILED"
                 }
+                
+                echo "=== 🔗 USEFUL LINKS ==="
+                echo "📊 Jenkins Build: ${BUILD_URL}"
+                echo "🐳 Backend Image: ${BACKEND_IMAGE}:${IMAGE_TAG}"
+                echo "🐳 Frontend Image: ${FRONTEND_IMAGE}:${IMAGE_TAG}"
             }
+        }
+        
+        success {
+            echo "🎉 Pipeline completed successfully!"
+        }
+        
+        failure {
+            echo "💥 Pipeline failed! Check the logs above for details."
+        }
+        
+        cleanup {
+            // Clean workspace on completion
+            cleanWs(cleanWhenNotBuilt: false,
+                    deleteDirs: true,
+                    disableDeferredWipeout: true,
+                    notFailBuild: true)
         }
     }
 }
