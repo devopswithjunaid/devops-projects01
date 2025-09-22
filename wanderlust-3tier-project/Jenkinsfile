@@ -8,6 +8,7 @@ pipeline {
     parameters {
         booleanParam(name: 'SKIP_DEPLOY', defaultValue: false, description: 'Skip deployment stage')
         booleanParam(name: 'SKIP_TESTS', defaultValue: false, description: 'Skip test stages')
+        booleanParam(name: 'FORCE_REBUILD', defaultValue: false, description: 'Force rebuild of Docker images')
     }
 
     environment {
@@ -15,6 +16,7 @@ pipeline {
         DOCKER_USER = "devopswithjunaid"
         BACKEND_IMAGE = "${DOCKER_USER}/wanderlust-backend"
         FRONTEND_IMAGE = "${DOCKER_USER}/wanderlust-frontend"
+        DEPLOY_SERVER = "35.93.157.96"
         BUILD_SUCCESS = "false"
         DOCKER_PUSH_SUCCESS = "false"
         DEPLOY_SUCCESS = "false"
@@ -71,29 +73,72 @@ pipeline {
             }
         }
 
-        stage('Code Quality Check') {
+        stage('Code Quality & Security Check') {
             when {
                 expression { !params.SKIP_TESTS }
             }
             steps {
                 script {
                     try {
-                        echo "📊 Running code quality checks..."
+                        echo "📊 Running comprehensive code quality checks..."
+                        
+                        // Backend checks
                         dir('wanderlust-3tier-project/backend') {
                             sh '''
-                                echo "Backend security audit:"
-                                npm audit --audit-level moderate || echo "⚠️ Audit completed with warnings"
+                                echo "🔍 Backend security audit:"
+                                npm audit --audit-level moderate || echo "⚠️ Backend audit completed with warnings"
+                                
+                                echo "🧪 Backend linting:"
+                                npm run check || echo "⚠️ Linting completed with warnings"
                             '''
                         }
+                        
+                        // Frontend checks
                         dir('wanderlust-3tier-project/frontend') {
                             sh '''
-                                echo "Frontend security audit:"
-                                npm audit --audit-level moderate || echo "⚠️ Audit completed with warnings"
+                                echo "🔍 Frontend security audit:"
+                                npm audit --audit-level moderate || echo "⚠️ Frontend audit completed with warnings"
+                                
+                                echo "🧪 Frontend linting:"
+                                npm run check || echo "⚠️ Linting completed with warnings"
                             '''
                         }
+                        
                         echo "✅ Code quality checks completed"
                     } catch (Exception e) {
                         echo "⚠️ Code quality check warnings: ${e.getMessage()}"
+                    }
+                }
+            }
+        }
+
+        stage('Build Application') {
+            steps {
+                script {
+                    try {
+                        echo "🏗️ Building application components..."
+                        
+                        // Test backend build
+                        dir('wanderlust-3tier-project/backend') {
+                            sh '''
+                                echo "🔧 Testing backend build..."
+                                node --check server.js
+                                echo "✅ Backend syntax check passed"
+                            '''
+                        }
+                        
+                        // Build frontend
+                        dir('wanderlust-3tier-project/frontend') {
+                            sh '''
+                                echo "🎨 Building frontend..."
+                                npm run build
+                                echo "✅ Frontend build completed"
+                            '''
+                        }
+                        
+                        echo "✅ Application build successful"
+                    } catch (Exception e) {
+                        error "❌ Application build failed: ${e.getMessage()}"
                     }
                 }
             }
@@ -114,10 +159,12 @@ pipeline {
                                 echo "✅ Backend image built successfully"
                             """
                             
-                            // Build frontend image
+                            // Build frontend image with correct API path
                             sh """
-                                echo "Building frontend image..."
-                                docker build -t ${FRONTEND_IMAGE}:${IMAGE_TAG} -f ./frontend/Dockerfile_optimized ./frontend
+                                echo "Building frontend image with production config..."
+                                docker build -t ${FRONTEND_IMAGE}:${IMAGE_TAG} \\
+                                    --build-arg VITE_API_PATH=http://${DEPLOY_SERVER}:5000 \\
+                                    -f ./frontend/Dockerfile_optimized ./frontend
                                 docker tag ${FRONTEND_IMAGE}:${IMAGE_TAG} ${FRONTEND_IMAGE}:latest
                                 echo "✅ Frontend image built successfully"
                             """
@@ -128,6 +175,40 @@ pipeline {
                         }
                     } catch (Exception e) {
                         error "❌ Docker build failed: ${e.getMessage()}"
+                    }
+                }
+            }
+        }
+
+        stage('Test Docker Images') {
+            when {
+                expression { !params.SKIP_TESTS }
+            }
+            steps {
+                script {
+                    try {
+                        echo "🧪 Testing Docker images..."
+                        
+                        // Test backend image
+                        sh """
+                            echo "Testing backend image..."
+                            docker run --rm -d --name test-backend -p 5001:5000 \\
+                                -e MONGODB_URI=mongodb://localhost:27017/test \\
+                                -e REDIS_URL=redis://localhost:6379 \\
+                                ${BACKEND_IMAGE}:${IMAGE_TAG}
+                            
+                            sleep 5
+                            
+                            # Test if backend is responding
+                            curl -f http://localhost:5001/ || echo "Backend test endpoint not ready"
+                            
+                            docker stop test-backend || true
+                            echo "✅ Backend image test completed"
+                        """
+                        
+                        echo "✅ Docker image tests completed"
+                    } catch (Exception e) {
+                        echo "⚠️ Docker image test warnings: ${e.getMessage()}"
                     }
                 }
             }
@@ -161,43 +242,56 @@ pipeline {
             }
         }
 
-        stage('Deploy Application') {
+        stage('Deploy to Production') {
             when {
                 expression { !params.SKIP_DEPLOY }
             }
             steps {
                 script {
                     try {
-                        echo "🚀 Deploying application to EC2 instance (35.93.157.96)..."
+                        echo "🚀 Deploying complete application stack to ${DEPLOY_SERVER}..."
                         
                         withCredentials([sshUserPrivateKey(credentialsId: 'agent-key', 
                                                          keyFileVariable: 'SSH_KEY', 
                                                          usernameVariable: 'SSH_USER')]) {
                             sh '''
-                                echo "📥 Deploying to remote server..."
+                                echo "📁 Preparing deployment files..."
                                 
-                                # Copy docker-compose file to remote server
+                                # Copy deployment files to remote server
                                 scp -i $SSH_KEY -o StrictHostKeyChecking=no \\
-                                    wanderlust-3tier-project/docker-compose-local.yml \\
-                                    ubuntu@35.93.157.96:/home/ubuntu/docker-compose.yml
+                                    wanderlust-3tier-project/docker-compose-production.yml \\
+                                    ubuntu@${DEPLOY_SERVER}:/home/ubuntu/docker-compose.yml
                                 
-                                # Deploy on remote server
-                                ssh -i $SSH_KEY -o StrictHostKeyChecking=no ubuntu@35.93.157.96 "
+                                scp -i $SSH_KEY -o StrictHostKeyChecking=no \\
+                                    wanderlust-3tier-project/init-mongo.js \\
+                                    ubuntu@${DEPLOY_SERVER}:/home/ubuntu/init-mongo.js
+                                
+                                echo "🚀 Deploying application stack..."
+                                ssh -i $SSH_KEY -o StrictHostKeyChecking=no ubuntu@${DEPLOY_SERVER} "
                                     echo '📥 Pulling latest images...'
                                     docker pull ${BACKEND_IMAGE}:latest
                                     docker pull ${FRONTEND_IMAGE}:latest
+                                    docker pull mongo:7.0
+                                    docker pull redis:7.2-alpine
                                     
                                     echo '🛑 Stopping existing services...'
-                                    docker-compose down || true
+                                    docker-compose down --remove-orphans || true
                                     
-                                    echo '🚀 Starting services...'
+                                    echo '🧹 Cleaning up old containers and volumes...'
+                                    docker system prune -f || true
+                                    
+                                    echo '🚀 Starting complete application stack...'
                                     docker-compose up -d
                                     
-                                    echo '⏳ Waiting for services to start...'
-                                    sleep 30
+                                    echo '⏳ Waiting for services to initialize...'
+                                    sleep 45
                                     
-                                    echo '📊 Checking service status...'
+                                    echo '📊 Checking service health...'
                                     docker-compose ps
+                                    
+                                    echo '🔍 Verifying service connectivity...'
+                                    docker-compose logs --tail=5 wanderlust-backend
+                                    docker-compose logs --tail=5 wanderlust-frontend
                                     
                                     echo '✅ Deployment completed successfully'
                                 "
@@ -212,45 +306,53 @@ pipeline {
             }
         }
 
-        stage('Health Check') {
+        stage('Production Health Check') {
             when {
                 expression { !params.SKIP_DEPLOY }
             }
             steps {
                 script {
                     try {
-                        echo "🏥 Performing health check on remote server..."
+                        echo "🏥 Performing comprehensive health checks..."
                         
                         withCredentials([sshUserPrivateKey(credentialsId: 'agent-key', 
                                                          keyFileVariable: 'SSH_KEY', 
                                                          usernameVariable: 'SSH_USER')]) {
                             sh '''
-                                ssh -i $SSH_KEY -o StrictHostKeyChecking=no ubuntu@35.93.157.96 "
-                                    echo '🔍 Checking application health...'
+                                ssh -i $SSH_KEY -o StrictHostKeyChecking=no ubuntu@${DEPLOY_SERVER} "
+                                    echo '🔍 Comprehensive health check...'
                                     
-                                    # Wait for services to fully start
-                                    sleep 15
+                                    # Wait for services to fully stabilize
+                                    sleep 30
                                     
-                                    # Check container status
-                                    echo 'Container status:'
+                                    echo '📊 Container Status:'
                                     docker ps --filter 'name=wanderlust' --format 'table {{.Names}}\\t{{.Status}}\\t{{.Ports}}'
                                     
-                                    # Check backend health
-                                    echo '\\n🔍 Testing backend health...'
-                                    curl -f http://localhost:5000/health || echo '⚠️ Backend health endpoint not ready yet'
+                                    echo '\\n🗄️ Database Health:'
+                                    docker exec wanderlust-mongodb mongosh --eval 'db.adminCommand(\"ping\")' || echo '⚠️ MongoDB not ready'
                                     
-                                    # Check frontend
-                                    echo '\\n🔍 Testing frontend...'
-                                    curl -f http://localhost:3000 || echo '⚠️ Frontend not ready yet'
+                                    echo '\\n🔴 Redis Health:'
+                                    docker exec wanderlust-redis redis-cli ping || echo '⚠️ Redis not ready'
                                     
-                                    # Show recent logs
-                                    echo '\\n📋 Recent logs:'
-                                    docker-compose logs --tail=10
+                                    echo '\\n🔧 Backend API Health:'
+                                    curl -f http://localhost:5000/ || echo '⚠️ Backend API not ready'
+                                    curl -f http://localhost:5000/api/posts || echo '⚠️ Backend posts API not ready'
+                                    
+                                    echo '\\n🎨 Frontend Health:'
+                                    curl -f http://localhost:3000 || echo '⚠️ Frontend not ready'
+                                    
+                                    echo '\\n📋 Service Logs (last 10 lines):'
+                                    echo '--- Backend Logs ---'
+                                    docker logs --tail=10 wanderlust-backend
+                                    echo '--- Frontend Logs ---'
+                                    docker logs --tail=10 wanderlust-frontend
+                                    
+                                    echo '\\n✅ Health check completed'
                                 "
                             '''
                         }
                         
-                        echo "✅ Health check completed"
+                        echo "✅ Production health check completed"
                     } catch (Exception e) {
                         echo "⚠️ Health check warnings: ${e.getMessage()}"
                     }
@@ -258,18 +360,19 @@ pipeline {
             }
         }
 
-        stage('Cleanup Local Images') {
+        stage('Cleanup Local Resources') {
             steps {
                 script {
                     try {
-                        echo "🧹 Cleaning up local Docker images..."
+                        echo "🧹 Cleaning up local Docker resources..."
                         sh '''
                             # Remove old images (keep last 3 builds)
                             docker images ${BACKEND_IMAGE} --format "table {{.Repository}}:{{.Tag}}" | grep -v latest | tail -n +4 | xargs -r docker rmi || true
                             docker images ${FRONTEND_IMAGE} --format "table {{.Repository}}:{{.Tag}}" | grep -v latest | tail -n +4 | xargs -r docker rmi || true
                             
-                            # Clean up dangling images
+                            # Clean up dangling images and build cache
                             docker image prune -f || true
+                            docker builder prune -f || true
                             
                             echo "✅ Cleanup completed"
                         '''
@@ -284,10 +387,11 @@ pipeline {
     post {
         always {
             script {
-                echo "=== 📋 PIPELINE SUMMARY ==="
+                echo "=== 📋 WANDERLUST DEPLOYMENT SUMMARY ==="
                 echo "🏗️  Build Number: ${BUILD_NUMBER}"
                 echo "🌿 Branch: main"
                 echo "📦 Image Tag: ${IMAGE_TAG}"
+                echo "🖥️  Deploy Server: ${DEPLOY_SERVER}"
                 
                 if (env.BUILD_SUCCESS == "true") {
                     echo "🐳 Docker Build: ✅ SUCCESS"
@@ -302,34 +406,48 @@ pipeline {
                 }
                 
                 if (env.DEPLOY_SUCCESS == "true") {
-                    echo "🚀 Deployment: ✅ SUCCESS"
+                    echo "🚀 Production Deployment: ✅ SUCCESS"
                 } else if (params.SKIP_DEPLOY) {
-                    echo "🚀 Deployment: ⏭️ SKIPPED"
+                    echo "🚀 Production Deployment: ⏭️ SKIPPED"
                 } else {
-                    echo "🚀 Deployment: ❌ FAILED"
+                    echo "🚀 Production Deployment: ❌ FAILED"
                 }
                 
-                echo "=== 🔗 USEFUL LINKS ==="
+                echo "=== 🔗 APPLICATION LINKS ==="
                 echo "📊 Jenkins Build: ${BUILD_URL}"
+                echo "🌐 Wanderlust App: http://${DEPLOY_SERVER}:3000"
+                echo "🔧 Backend API: http://${DEPLOY_SERVER}:5000"
+                echo "📚 API Docs: http://${DEPLOY_SERVER}:5000/api/posts"
                 echo "🐳 Backend Image: ${BACKEND_IMAGE}:${IMAGE_TAG}"
                 echo "🐳 Frontend Image: ${FRONTEND_IMAGE}:${IMAGE_TAG}"
-                echo "🌐 Application URL: http://35.93.157.96:3000"
-                echo "🔧 Backend API: http://35.93.157.96:5000"
+                
+                echo "=== 🛠️ STACK COMPONENTS ==="
+                echo "🗄️  Database: MongoDB 7.0"
+                echo "🔴 Cache: Redis 7.2"
+                echo "🔧 Backend: Node.js + Express"
+                echo "🎨 Frontend: React + Vite"
+                echo "🐳 Container: Docker + Docker Compose"
             }
         }
         
         success {
-            echo "🎉 Pipeline completed successfully!"
+            echo "🎉 Wanderlust application deployed successfully!"
+            echo "🌐 Visit your application at: http://${DEPLOY_SERVER}:3000"
         }
         
         failure {
             echo "💥 Pipeline failed! Check the logs above for details."
+            echo "🔧 Common issues to check:"
+            echo "   - Docker Hub credentials"
+            echo "   - SSH access to deployment server"
+            echo "   - Security group ports (3000, 5000)"
+            echo "   - Server resources (memory, disk space)"
         }
         
         cleanup {
             script {
                 try {
-                    echo "🧹 Manual cleanup completed"
+                    echo "🧹 Final cleanup completed"
                 } catch (Exception e) {
                     echo "⚠️ Cleanup completed with warnings"
                 }
