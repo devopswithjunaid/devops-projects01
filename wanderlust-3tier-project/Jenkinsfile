@@ -172,31 +172,30 @@ pipeline {
                         
                         // Copy docker-compose file to deployment directory
                         sh '''
-                            # Create deployment directory
-                            sudo mkdir -p /opt/wanderlust-app
-                            sudo chown ubuntu:ubuntu /opt/wanderlust-app
+                            # Create deployment directory in user home
+                            mkdir -p /home/ubuntu/wanderlust-app
                             
                             # Copy docker-compose file
-                            cp wanderlust-3tier-project/docker-compose-local.yml /opt/wanderlust-app/docker-compose.yml
+                            cp wanderlust-3tier-project/docker-compose-local.yml /home/ubuntu/wanderlust-app/docker-compose.yml
                             
                             # Navigate to deployment directory
-                            cd /opt/wanderlust-app
+                            cd /home/ubuntu/wanderlust-app
                             
                             echo "📥 Pulling latest images..."
                             docker pull ${BACKEND_IMAGE}:latest
                             docker pull ${FRONTEND_IMAGE}:latest
                             
                             echo "🛑 Stopping existing services..."
-                            docker compose down || true
+                            docker-compose down || true
                             
                             echo "🚀 Starting services..."
-                            docker compose up -d
+                            docker-compose up -d
                             
                             echo "⏳ Waiting for services to start..."
                             sleep 30
                             
                             echo "📊 Checking service status..."
-                            docker compose ps
+                            docker-compose ps
                             
                             echo "✅ Deployment completed successfully"
                         '''
@@ -228,17 +227,18 @@ pipeline {
                             echo "Container status:"
                             docker ps --filter "name=wanderlust" --format "table {{.Names}}\\t{{.Status}}\\t{{.Ports}}"
                             
-                            # Check backend health
+                            # Check backend health (may fail initially, that's ok)
                             echo "\\n🔍 Testing backend health..."
-                            curl -f http://localhost:5000/health || echo "⚠️ Backend health check failed"
+                            curl -f http://localhost:5000/health || echo "⚠️ Backend health endpoint not ready yet"
                             
-                            # Check frontend
+                            # Check frontend (may fail initially, that's ok)
                             echo "\\n🔍 Testing frontend..."
-                            curl -f http://localhost:3000 || echo "⚠️ Frontend health check failed"
+                            curl -f http://localhost:3000 || echo "⚠️ Frontend not ready yet"
                             
-                            # Show logs if there are issues
+                            # Show logs
                             echo "\\n📋 Recent logs:"
-                            docker compose -f /opt/wanderlust-app/docker-compose.yml logs --tail=5
+                            cd /home/ubuntu/wanderlust-app
+                            docker-compose logs --tail=10
                         '''
                         
                         echo "✅ Health check completed"
