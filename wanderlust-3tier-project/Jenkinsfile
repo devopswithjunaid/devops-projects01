@@ -170,32 +170,62 @@ pipeline {
                     try {
                         echo "🚀 Deploying application to local EC2 instance..."
                         
-                        // Copy docker-compose file to deployment directory
+                        // Deploy using docker run commands directly on the host
                         sh '''
-                            # Create deployment directory in user home
-                            mkdir -p /home/ubuntu/wanderlust-app
-                            
-                            # Copy docker-compose file
-                            cp wanderlust-3tier-project/docker-compose-local.yml /home/ubuntu/wanderlust-app/docker-compose.yml
-                            
-                            # Navigate to deployment directory
-                            cd /home/ubuntu/wanderlust-app
-                            
                             echo "📥 Pulling latest images..."
                             docker pull ${BACKEND_IMAGE}:latest
                             docker pull ${FRONTEND_IMAGE}:latest
                             
-                            echo "🛑 Stopping existing services..."
-                            docker-compose down || true
+                            echo "🛑 Stopping existing containers..."
+                            docker stop wanderlust-mongodb wanderlust-redis wanderlust-backend wanderlust-frontend || true
+                            docker rm wanderlust-mongodb wanderlust-redis wanderlust-backend wanderlust-frontend || true
                             
-                            echo "🚀 Starting services..."
-                            docker-compose up -d
+                            echo "🗄️ Starting MongoDB..."
+                            docker run -d --name wanderlust-mongodb \\
+                                -e MONGO_INITDB_ROOT_USERNAME=admin \\
+                                -e MONGO_INITDB_ROOT_PASSWORD=password123 \\
+                                -e MONGO_INITDB_DATABASE=wanderlust \\
+                                -p 27017:27017 \\
+                                --restart unless-stopped \\
+                                mongo:7.0
                             
-                            echo "⏳ Waiting for services to start..."
-                            sleep 30
+                            echo "🔴 Starting Redis..."
+                            docker run -d --name wanderlust-redis \\
+                                -p 6379:6379 \\
+                                --restart unless-stopped \\
+                                redis:7.2-alpine
                             
-                            echo "📊 Checking service status..."
-                            docker-compose ps
+                            echo "⏳ Waiting for databases to start..."
+                            sleep 15
+                            
+                            echo "🔧 Starting Backend..."
+                            docker run -d --name wanderlust-backend \\
+                                -e NODE_ENV=production \\
+                                -e PORT=5000 \\
+                                -e MONGODB_URI="mongodb://admin:password123@$(hostname -I | awk '{print $1}'):27017/wanderlust?authSource=admin" \\
+                                -e REDIS_URL="redis://$(hostname -I | awk '{print $1}'):6379" \\
+                                -e JWT_SECRET=your-super-secret-jwt-key-change-in-production \\
+                                -e CORS_ORIGIN="http://$(hostname -I | awk '{print $1}'):3000" \\
+                                -p 5000:5000 \\
+                                --restart unless-stopped \\
+                                ${BACKEND_IMAGE}:latest
+                            
+                            echo "⏳ Waiting for backend to start..."
+                            sleep 10
+                            
+                            echo "🎨 Starting Frontend..."
+                            docker run -d --name wanderlust-frontend \\
+                                -e NODE_ENV=production \\
+                                -e VITE_API_URL="http://$(hostname -I | awk '{print $1}'):5000" \\
+                                -p 3000:3000 \\
+                                --restart unless-stopped \\
+                                ${FRONTEND_IMAGE}:latest
+                            
+                            echo "⏳ Waiting for frontend to start..."
+                            sleep 10
+                            
+                            echo "📊 Checking container status..."
+                            docker ps --filter "name=wanderlust" --format "table {{.Names}}\\t{{.Status}}\\t{{.Ports}}"
                             
                             echo "✅ Deployment completed successfully"
                         '''
@@ -227,18 +257,23 @@ pipeline {
                             echo "Container status:"
                             docker ps --filter "name=wanderlust" --format "table {{.Names}}\\t{{.Status}}\\t{{.Ports}}"
                             
+                            # Get the host IP
+                            HOST_IP=$(hostname -I | awk '{print $1}')
+                            
                             # Check backend health (may fail initially, that's ok)
                             echo "\\n🔍 Testing backend health..."
-                            curl -f http://localhost:5000/health || echo "⚠️ Backend health endpoint not ready yet"
+                            curl -f http://$HOST_IP:5000/health || echo "⚠️ Backend health endpoint not ready yet"
                             
                             # Check frontend (may fail initially, that's ok)
                             echo "\\n🔍 Testing frontend..."
-                            curl -f http://localhost:3000 || echo "⚠️ Frontend not ready yet"
+                            curl -f http://$HOST_IP:3000 || echo "⚠️ Frontend not ready yet"
                             
-                            # Show logs
-                            echo "\\n📋 Recent logs:"
-                            cd /home/ubuntu/wanderlust-app
-                            docker-compose logs --tail=10
+                            # Show recent logs
+                            echo "\\n📋 Backend logs:"
+                            docker logs --tail=5 wanderlust-backend || true
+                            
+                            echo "\\n📋 Frontend logs:"
+                            docker logs --tail=5 wanderlust-frontend || true
                         '''
                         
                         echo "✅ Health check completed"
