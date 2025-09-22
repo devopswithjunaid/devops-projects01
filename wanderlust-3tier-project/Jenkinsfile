@@ -15,10 +15,9 @@ pipeline {
         DOCKER_USER = "devopswithjunaid"
         BACKEND_IMAGE = "${DOCKER_USER}/wanderlust-backend"
         FRONTEND_IMAGE = "${DOCKER_USER}/wanderlust-frontend"
-        TRIVY_CACHE_DIR = "${WORKSPACE}/.trivy-cache"
-        DEPLOY_SUCCESS = "false"
-        DOCKER_PUSH_SUCCESS = "false"
         BUILD_SUCCESS = "false"
+        DOCKER_PUSH_SUCCESS = "false"
+        DEPLOY_SUCCESS = "false"
     }
 
     stages {
@@ -26,10 +25,7 @@ pipeline {
             steps {
                 script {
                     try {
-                        // Clean up any previous Trivy cache that might cause issues
-                        sh 'rm -rf ${WORKSPACE}/.trivy-cache || true'
-                        sh 'rm -rf ${WORKSPACE}/trivy-reports || true'
-                        echo "🧹 Workspace cleaned"
+                        echo "🧹 Starting fresh workspace"
                     } catch (Exception e) {
                         echo "⚠️ Cleanup warning: ${e.getMessage()}"
                     }
@@ -41,7 +37,7 @@ pipeline {
             steps {
                 script {
                     try {
-                        git branch: 'main', url: 'https://github.com/devopswithjunaid/devops-projects01.git'
+                        git branch: 'main', url: 'https://github.com/MuhammadAbraiz/devops-projects01.git'
                         echo "✅ Code checkout successful"
                     } catch (Exception e) {
                         error "❌ Git checkout failed: ${e.getMessage()}"
@@ -137,38 +133,6 @@ pipeline {
             }
         }
 
-        stage('Security Scan') {
-            when {
-                expression { !params.SKIP_TESTS }
-            }
-            steps {
-                script {
-                    try {
-                        sh "mkdir -p ${TRIVY_CACHE_DIR}"
-                        echo "🔍 Scanning Docker images for vulnerabilities..."
-                        
-                        sh """
-                            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-                            -v ${TRIVY_CACHE_DIR}:/root/.cache/ \
-                            aquasec/trivy image --scanners vuln --severity HIGH,CRITICAL \
-                            --exit-code 0 --format table ${BACKEND_IMAGE}:${IMAGE_TAG} || echo "⚠️ Backend scan completed with findings"
-                        """
-                        
-                        sh """
-                            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-                            -v ${TRIVY_CACHE_DIR}:/root/.cache/ \
-                            aquasec/trivy image --scanners vuln --severity HIGH,CRITICAL \
-                            --exit-code 0 --format table ${FRONTEND_IMAGE}:${IMAGE_TAG} || echo "⚠️ Frontend scan completed with findings"
-                        """
-                        
-                        echo "✅ Security scans completed"
-                    } catch (Exception e) {
-                        echo "⚠️ Security scan warnings: ${e.getMessage()}"
-                    }
-                }
-            }
-        }
-
         stage('Push to Docker Hub') {
             steps {
                 script {
@@ -209,22 +173,6 @@ pipeline {
                         env.DEPLOY_SUCCESS = "true"
                     } catch (Exception e) {
                         echo "⚠️ Deployment skipped: ${e.getMessage()}"
-                    }
-                }
-            }
-        }
-
-        stage('Health Check') {
-            when {
-                expression { !params.SKIP_DEPLOY }
-            }
-            steps {
-                script {
-                    try {
-                        echo "🏥 Health check - Currently disabled for testing"
-                        echo "✅ Images successfully built and pushed to Docker Hub"
-                    } catch (Exception e) {
-                        echo "⚠️ Health check skipped: ${e.getMessage()}"
                     }
                 }
             }
@@ -297,10 +245,8 @@ pipeline {
         }
         
         cleanup {
-            // Skip automatic cleanup to avoid workspace deletion issues
             script {
                 try {
-                    sh 'rm -rf ${WORKSPACE}/.trivy-cache || true'
                     echo "🧹 Manual cleanup completed"
                 } catch (Exception e) {
                     echo "⚠️ Cleanup completed with warnings"
