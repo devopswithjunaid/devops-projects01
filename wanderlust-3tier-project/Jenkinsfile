@@ -69,7 +69,9 @@ pipeline {
 
         stage('Code Quality Check') {
             when {
-                not { params.SKIP_TESTS }
+                not { 
+                    params.SKIP_TESTS == true
+                }
             }
             steps {
                 script {
@@ -131,7 +133,9 @@ pipeline {
 
         stage('Security Scan') {
             when {
-                not { params.SKIP_TESTS }
+                not { 
+                    params.SKIP_TESTS == true
+                }
             }
             steps {
                 script {
@@ -191,7 +195,9 @@ pipeline {
 
         stage('Deploy Application') {
             when {
-                not { params.SKIP_DEPLOY }
+                not { 
+                    params.SKIP_DEPLOY == true
+                }
             }
             steps {
                 script {
@@ -223,7 +229,9 @@ pipeline {
 
         stage('Health Check') {
             when {
-                not { params.SKIP_DEPLOY }
+                not { 
+                    params.SKIP_DEPLOY == true
+                }
             }
             steps {
                 script {
