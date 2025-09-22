@@ -24,8 +24,16 @@ pipeline {
     stages {
         stage('Clean Workspace') {
             steps {
-                cleanWs()
-                echo "🧹 Workspace cleaned"
+                script {
+                    try {
+                        // Clean up any previous Trivy cache that might cause issues
+                        sh 'rm -rf ${WORKSPACE}/.trivy-cache || true'
+                        sh 'rm -rf ${WORKSPACE}/trivy-reports || true'
+                        echo "🧹 Workspace cleaned"
+                    } catch (Exception e) {
+                        echo "⚠️ Cleanup warning: ${e.getMessage()}"
+                    }
+                }
             }
         }
 
@@ -289,11 +297,15 @@ pipeline {
         }
         
         cleanup {
-            // Clean workspace on completion
-            cleanWs(cleanWhenNotBuilt: false,
-                    deleteDirs: true,
-                    disableDeferredWipeout: true,
-                    notFailBuild: true)
+            // Skip automatic cleanup to avoid workspace deletion issues
+            script {
+                try {
+                    sh 'rm -rf ${WORKSPACE}/.trivy-cache || true'
+                    echo "🧹 Manual cleanup completed"
+                } catch (Exception e) {
+                    echo "⚠️ Cleanup completed with warnings"
+                }
+            }
         }
     }
 }
