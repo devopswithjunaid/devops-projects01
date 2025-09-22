@@ -16,7 +16,8 @@ pipeline {
         DOCKER_USER = "devopswithjunaid"
         BACKEND_IMAGE = "${DOCKER_USER}/wanderlust-backend"
         FRONTEND_IMAGE = "${DOCKER_USER}/wanderlust-frontend"
-        DEPLOY_SERVER = "35.93.157.96"
+        DEPLOY_SERVER = "ec2-35-93-157-96.us-west-2.compute.amazonaws.com"
+        DEPLOY_USER = "ec2-user"
         BUILD_SUCCESS = "false"
         DOCKER_PUSH_SUCCESS = "false"
         DEPLOY_SUCCESS = "false"
@@ -276,14 +277,14 @@ pipeline {
                                 # Copy deployment files to remote server
                                 scp -i $SSH_KEY -o StrictHostKeyChecking=no \\
                                     wanderlust-3tier-project/docker-compose-production.yml \\
-                                    ubuntu@${DEPLOY_SERVER}:/home/ubuntu/docker-compose.yml
+                                    ${DEPLOY_USER}@${DEPLOY_SERVER}:/home/${DEPLOY_USER}/docker-compose.yml
                                 
                                 scp -i $SSH_KEY -o StrictHostKeyChecking=no \\
                                     wanderlust-3tier-project/init-mongo.js \\
-                                    ubuntu@${DEPLOY_SERVER}:/home/ubuntu/init-mongo.js
+                                    ${DEPLOY_USER}@${DEPLOY_SERVER}:/home/${DEPLOY_USER}/init-mongo.js
                                 
                                 echo "🚀 Deploying application stack..."
-                                ssh -i $SSH_KEY -o StrictHostKeyChecking=no ubuntu@${DEPLOY_SERVER} "
+                                ssh -i $SSH_KEY -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_SERVER} "
                                     echo '📥 Pulling latest images...'
                                     docker pull ${BACKEND_IMAGE}:latest
                                     docker pull ${FRONTEND_IMAGE}:latest
@@ -335,7 +336,7 @@ pipeline {
                                                          keyFileVariable: 'SSH_KEY', 
                                                          usernameVariable: 'SSH_USER')]) {
                             sh '''
-                                ssh -i $SSH_KEY -o StrictHostKeyChecking=no ubuntu@${DEPLOY_SERVER} "
+                                ssh -i $SSH_KEY -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_SERVER} "
                                     echo '🔍 Comprehensive health check...'
                                     
                                     # Wait for services to fully stabilize
@@ -431,9 +432,9 @@ pipeline {
                 
                 echo "=== 🔗 APPLICATION LINKS ==="
                 echo "📊 Jenkins Build: ${BUILD_URL}"
-                echo "🌐 Wanderlust App: http://${DEPLOY_SERVER}:3000"
-                echo "🔧 Backend API: http://${DEPLOY_SERVER}:5000"
-                echo "📚 API Docs: http://${DEPLOY_SERVER}:5000/api/posts"
+                echo "🌐 Wanderlust App: http://35.93.157.96:3000"
+                echo "🔧 Backend API: http://35.93.157.96:5000"
+                echo "📚 API Docs: http://35.93.157.96:5000/api/posts"
                 echo "🐳 Backend Image: ${BACKEND_IMAGE}:${IMAGE_TAG}"
                 echo "🐳 Frontend Image: ${FRONTEND_IMAGE}:${IMAGE_TAG}"
                 
