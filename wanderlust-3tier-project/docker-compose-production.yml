@@ -42,6 +42,7 @@ services:
     image: devopswithjunaid/wanderlust-backend:latest
     container_name: wanderlust-backend
     restart: unless-stopped
+    command: ["node", "server.js"]
     environment:
       NODE_ENV: production
       PORT: 5000
