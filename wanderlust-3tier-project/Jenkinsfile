@@ -309,8 +309,7 @@ pipeline {
                                     
                                     echo '✅ Deployment completed successfully'
                                 "
-                            '''
-                        }
+                        '''
                         
                         env.DEPLOY_SUCCESS = "true"
                     } catch (Exception e) {
