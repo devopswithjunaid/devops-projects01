@@ -74,14 +74,14 @@ services:
       NODE_ENV: production
       VITE_API_PATH: http://35.93.157.96:5000
     ports:
-      - "3000:3000"
+      - "3000:80"
     depends_on:
       backend:
         condition: service_healthy
     networks:
       - wanderlust-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000"]
+      test: ["CMD", "curl", "-f", "http://localhost:80"]
       interval: 30s
       timeout: 10s
       retries: 3
