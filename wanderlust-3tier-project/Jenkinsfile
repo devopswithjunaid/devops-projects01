@@ -272,16 +272,16 @@ pipeline {
                             echo "📁 Preparing deployment files..."
                             
                             # Copy deployment files to remote server
-                            scp -i /tmp/testkey_new.pem -o StrictHostKeyChecking=no \\
+                            scp -i /var/lib/jenkins/testkey.pem -o StrictHostKeyChecking=no \\
                                 wanderlust-3tier-project/docker-compose-production.yml \\
                                 ${DEPLOY_USER}@${DEPLOY_SERVER}:/home/${DEPLOY_USER}/docker-compose.yml
                             
-                            scp -i /tmp/testkey_new.pem -o StrictHostKeyChecking=no \\
+                            scp -i /var/lib/jenkins/testkey.pem -o StrictHostKeyChecking=no \\
                                 wanderlust-3tier-project/init-mongo.js \\
                                 ${DEPLOY_USER}@${DEPLOY_SERVER}:/home/${DEPLOY_USER}/init-mongo.js
                             
                             echo "🚀 Deploying application stack..."
-                            ssh -i /tmp/testkey_new.pem -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_SERVER} "
+                            ssh -i /var/lib/jenkins/testkey.pem -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_SERVER} "
                                 echo '📥 Pulling latest images...'
                                 docker pull ${BACKEND_IMAGE}:latest
                                 docker pull ${FRONTEND_IMAGE}:latest
@@ -329,7 +329,7 @@ pipeline {
                         echo "🏥 Performing comprehensive health checks..."
                         
                         sh '''
-                            ssh -i /tmp/testkey_new.pem -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_SERVER} "
+                            ssh -i /var/lib/jenkins/testkey.pem -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_SERVER} "
                                 echo '🔍 Comprehensive health check...'
                                 
                                 # Wait for services to fully stabilize
