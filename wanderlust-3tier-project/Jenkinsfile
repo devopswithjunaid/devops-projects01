@@ -359,8 +359,7 @@ pipeline {
                                     
                                     echo '\\n✅ Health check completed'
                                 "
-                            '''
-                        }
+                        '''
                         
                         echo "✅ Production health check completed"
                     } catch (Exception e) {
