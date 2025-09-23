@@ -268,36 +268,33 @@ pipeline {
                     try {
                         echo "🚀 Deploying complete application stack to ${DEPLOY_SERVER}..."
                         
-                        withCredentials([sshUserPrivateKey(credentialsId: 'agent-key', 
-                                                         keyFileVariable: 'SSH_KEY', 
-                                                         usernameVariable: 'SSH_USER')]) {
-                            sh '''
-                                echo "📁 Preparing deployment files..."
+                        sh '''
+                            echo "📁 Preparing deployment files..."
+                            
+                            # Copy deployment files to remote server
+                            scp -i /tmp/testkey_new.pem -o StrictHostKeyChecking=no \\
+                                wanderlust-3tier-project/docker-compose-production.yml \\
+                                ${DEPLOY_USER}@${DEPLOY_SERVER}:/home/${DEPLOY_USER}/docker-compose.yml
+                            
+                            scp -i /tmp/testkey_new.pem -o StrictHostKeyChecking=no \\
+                                wanderlust-3tier-project/init-mongo.js \\
+                                ${DEPLOY_USER}@${DEPLOY_SERVER}:/home/${DEPLOY_USER}/init-mongo.js
+                            
+                            echo "🚀 Deploying application stack..."
+                            ssh -i /tmp/testkey_new.pem -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_SERVER} "
+                                echo '📥 Pulling latest images...'
+                                docker pull ${BACKEND_IMAGE}:latest
+                                docker pull ${FRONTEND_IMAGE}:latest
+                                docker pull mongo:7.0
+                                docker pull redis:7.2-alpine
                                 
-                                # Copy deployment files to remote server
-                                scp -i $SSH_KEY -o StrictHostKeyChecking=no \\
-                                    wanderlust-3tier-project/docker-compose-production.yml \\
-                                    ${DEPLOY_USER}@${DEPLOY_SERVER}:/home/${DEPLOY_USER}/docker-compose.yml
+                                echo '🛑 Stopping existing services...'
+                                docker-compose down --remove-orphans || true
                                 
-                                scp -i $SSH_KEY -o StrictHostKeyChecking=no \\
-                                    wanderlust-3tier-project/init-mongo.js \\
-                                    ${DEPLOY_USER}@${DEPLOY_SERVER}:/home/${DEPLOY_USER}/init-mongo.js
+                                echo '🧹 Cleaning up old containers and volumes...'
+                                docker system prune -f || true
                                 
-                                echo "🚀 Deploying application stack..."
-                                ssh -i $SSH_KEY -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_SERVER} "
-                                    echo '📥 Pulling latest images...'
-                                    docker pull ${BACKEND_IMAGE}:latest
-                                    docker pull ${FRONTEND_IMAGE}:latest
-                                    docker pull mongo:7.0
-                                    docker pull redis:7.2-alpine
-                                    
-                                    echo '🛑 Stopping existing services...'
-                                    docker-compose down --remove-orphans || true
-                                    
-                                    echo '🧹 Cleaning up old containers and volumes...'
-                                    docker system prune -f || true
-                                    
-                                    echo '🚀 Starting complete application stack...'
+                                echo '🚀 Starting complete application stack...'
                                     docker-compose up -d
                                     
                                     echo '⏳ Waiting for services to initialize...'
@@ -332,24 +329,21 @@ pipeline {
                     try {
                         echo "🏥 Performing comprehensive health checks..."
                         
-                        withCredentials([sshUserPrivateKey(credentialsId: 'agent-key', 
-                                                         keyFileVariable: 'SSH_KEY', 
-                                                         usernameVariable: 'SSH_USER')]) {
-                            sh '''
-                                ssh -i $SSH_KEY -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_SERVER} "
-                                    echo '🔍 Comprehensive health check...'
-                                    
-                                    # Wait for services to fully stabilize
-                                    sleep 30
-                                    
-                                    echo '📊 Container Status:'
-                                    docker ps --filter 'name=wanderlust' --format 'table {{.Names}}\\t{{.Status}}\\t{{.Ports}}'
-                                    
-                                    echo '\\n🗄️ Database Health:'
-                                    docker exec wanderlust-mongodb mongosh --eval 'db.adminCommand(\"ping\")' || echo '⚠️ MongoDB not ready'
-                                    
-                                    echo '\\n🔴 Redis Health:'
-                                    docker exec wanderlust-redis redis-cli ping || echo '⚠️ Redis not ready'
+                        sh '''
+                            ssh -i /tmp/testkey_new.pem -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_SERVER} "
+                                echo '🔍 Comprehensive health check...'
+                                
+                                # Wait for services to fully stabilize
+                                sleep 30
+                                
+                                echo '📊 Container Status:'
+                                docker ps --filter 'name=wanderlust' --format 'table {{.Names}}\\t{{.Status}}\\t{{.Ports}}'
+                                
+                                echo '\\n🗄️ Database Health:'
+                                docker exec wanderlust-mongodb mongosh --eval 'db.adminCommand(\"ping\")' || echo '⚠️ MongoDB not ready'
+                                
+                                echo '\\n🔴 Redis Health:'
+                                docker exec wanderlust-redis redis-cli ping || echo '⚠️ Redis not ready'
                                     
                                     echo '\\n🔧 Backend API Health:'
                                     curl -f http://localhost:5000/ || echo '⚠️ Backend API not ready'
