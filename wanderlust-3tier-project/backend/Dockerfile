@@ -7,8 +7,8 @@ WORKDIR /app
 # Copy package.json and package-lock.json first to leverage Docker cache
 COPY package*.json ./
 
-# Install dependencies
-RUN npm install
+# Install dependencies with clean install
+RUN npm ci --only=production --no-audit --no-fund
 
 # Now copy the rest of your application code
 COPY . .
@@ -21,4 +21,4 @@ USER appuser
 EXPOSE 5000
 
 # Command to start your application
-CMD ["npm", "start"]
+CMD ["node", "server.js"]
